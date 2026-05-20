@@ -2181,26 +2181,29 @@ viewport.addEventListener('mousedown', function(e) {
   var nodeEl = target.closest('.world-node');
   var noteEl = target.closest('.world-note');
 
-  // 连接点 → 拖拽连线
+  // 连接点 → 拖拽连线（Shift → 选中节点）
   if (connPt && nodeEl) {
-    var side = connPt.dataset.side;
-    var nid = nodeEl.dataset.id;
-    var hit = findMediaById(nid);
-    if (!hit) return;
-    if (side === 'right') {
-      isDraggingConnection = true; connDragSrcId = nid;
-      connDragMouseX = e.clientX; connDragMouseY = e.clientY;
-      updateConnectionsSvg();
-    } else if (side === 'left') {
-      var linked = connections.filter(function(c){return c.targetId===nid;});
-      if (linked.length > 0) {
-        var oldSrc = linked[0].sourceId; linked.forEach(function(c){removeConnection(c.id);});
-        isDraggingConnection = true; connDragSrcId = oldSrc;
+    if (e.shiftKey) { target = nodeEl; connPt = null; }
+    else {
+      var side = connPt.dataset.side;
+      var nid = nodeEl.dataset.id;
+      var hit = findMediaById(nid);
+      if (!hit) return;
+      if (side === 'right') {
+        isDraggingConnection = true; connDragSrcId = nid;
         connDragMouseX = e.clientX; connDragMouseY = e.clientY;
         updateConnectionsSvg();
+      } else if (side === 'left') {
+        var linked = connections.filter(function(c){return c.targetId===nid;});
+        if (linked.length > 0) {
+          var oldSrc = linked[0].sourceId; linked.forEach(function(c){removeConnection(c.id);});
+          isDraggingConnection = true; connDragSrcId = oldSrc;
+          connDragMouseX = e.clientX; connDragMouseY = e.clientY;
+          updateConnectionsSvg();
+        }
       }
+      e.stopPropagation(); e.preventDefault(); return;
     }
-    e.stopPropagation(); e.preventDefault(); return;
   }
 
   // 连线路径 → 选中连线
@@ -2215,8 +2218,8 @@ viewport.addEventListener('mousedown', function(e) {
     var noteId = noteEl.dataset.id;
     var hitN = findNoteById(noteId);
     if (!hitN) return;
-    // 缩放手柄
-    if (target.closest('.note-resize-wrap')) {
+    // 缩放手柄（Shift → 选中）
+    if (!e.shiftKey && target.closest('.note-resize-wrap')) {
       isResizingNote = true; resizeNoteId = noteId;
       resizeOrigW = hitN.note.width; resizeOrigH = hitN.note.height;
       resizeOrigX = e.clientX; resizeOrigY = e.clientY;
@@ -2238,7 +2241,7 @@ viewport.addEventListener('mousedown', function(e) {
     bringToFront(noteEl);
     // 双击进入编辑后 → 不拖拽
     var noteCard = target.closest('.note-card');
-    if (noteCard && noteCard.isContentEditable) return;
+    if (!e.shiftKey && noteCard && noteCard.isContentEditable) return;
     // 多选状态 → 编组拖拽
     pushUndo();
     if ((selectedMediaIds.length + selectedNoteIds.length) > 1) {
@@ -2261,8 +2264,8 @@ viewport.addEventListener('mousedown', function(e) {
     var hitM = findMediaById(nodeId);
     if (!hitM) return;
     if (currentTool === 'note') return;
-    if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.isContentEditable) return;
-    if (target.closest('.frame-table-preview') || target.closest('.frame-body')) { e.stopPropagation(); return; }
+    if (!e.shiftKey && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.isContentEditable)) return;
+    if (!e.shiftKey && (target.closest('.frame-table-preview') || target.closest('.frame-body'))) { e.stopPropagation(); return; }
 
     // 已在框选组内 → Shift取消选中，否则编组拖拽
     if (selectedMediaIds.length > 1 && selectedMediaIds.indexOf(nodeId) >= 0) {
