@@ -853,8 +853,8 @@ async function start() {
     } catch (e) {}
 
     // 种子：导入默认 SKILL（分镜关键帧提示词生成器）
-    var skillPath = path.join(__dirname, '..', 'SKILL', 'storyboard-keyframe-generator', 'SKILL.md');
-    var schemaPath = path.join(__dirname, '..', 'SKILL', 'storyboard-keyframe-generator', 'references', '分镜关键帧提示词.json');
+    var skillPath = path.join(__dirname, 'SKILL', 'storyboard-keyframe-generator', 'SKILL.md');
+    var schemaPath = path.join(__dirname, 'SKILL', 'storyboard-keyframe-generator', 'references', '分镜关键帧提示词.json');
     var existingSkill = queryOne('SELECT id FROM skills WHERE name=?', ['storyboard-keyframe-generator']);
     try {
         var skillContent2 = fs.readFileSync(skillPath, 'utf-8');
