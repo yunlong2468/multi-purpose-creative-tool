@@ -2264,8 +2264,8 @@ viewport.addEventListener('mousedown', function(e) {
     var hitM = findMediaById(nodeId);
     if (!hitM) return;
     if (currentTool === 'note') return;
-    if (!e.shiftKey && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.isContentEditable)) return;
-    if (!e.shiftKey && (target.closest('.frame-table-preview') || target.closest('.frame-body'))) { e.stopPropagation(); return; }
+    if (!e.shiftKey && selectedMediaIds.indexOf(nodeId) < 0 && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.tagName === 'BUTTON' || target.isContentEditable)) return;
+    if (!e.shiftKey && selectedMediaIds.indexOf(nodeId) < 0 && (target.closest('.frame-table-preview') || target.closest('.frame-body'))) { e.stopPropagation(); return; }
 
     // 已在框选组内 → Shift取消选中，否则编组拖拽
     if (selectedMediaIds.length > 1 && selectedMediaIds.indexOf(nodeId) >= 0) {
