@@ -483,6 +483,92 @@ var connIdCounter = 0;
 var currentTool = 'select';
 var selectedMediaIds = [];
 var selectedNoteIds = [];
+
+// ==================== 剪贴板 + 撤销栈 ====================
+var clipboard = null;
+var undoStack = [];
+var UNDO_MAX = 25;
+var _skipUndoPush = false;
+
+function pushUndo() {
+  if (_skipUndoPush) return;
+  var snap = serializeCanvas();
+  undoStack.push(snap);
+  if (undoStack.length > UNDO_MAX) undoStack.shift();
+}
+
+function undo() {
+  if (undoStack.length === 0) return;
+  var snap = undoStack.pop();
+  restoreCanvas(snap);
+  toast('已撤销', '');
+}
+
+function copySelected() {
+  var hasSel = selectedMediaIds.length > 0 || selectedNoteIds.length > 0;
+  if (!hasSel) return;
+  var selSet = {};
+  selectedMediaIds.forEach(function(id) { selSet[id] = true; });
+  selectedNoteIds.forEach(function(id) { selSet[id] = true; });
+  var nodes = [];
+  selectedMediaIds.forEach(function(id) {
+    var h = findMediaById(id);
+    if (h) { var nn = JSON.parse(JSON.stringify(h.node)); nodes.push({ type:'media', data:nn }); }
+  });
+  selectedNoteIds.forEach(function(id) {
+    var h = findNoteById(id);
+    if (h) { var nn = JSON.parse(JSON.stringify(h.note)); nodes.push({ type:'note', data:nn }); }
+  });
+  var conns = connections.filter(function(c) { return selSet[c.sourceId] && selSet[c.targetId]; });
+  clipboard = { nodes: nodes, connections: conns };
+  toast('已复制 ' + nodes.length + ' 个节点', '');
+}
+window.copySelected = copySelected;
+
+function cutSelected() {
+  var hasSel = selectedMediaIds.length > 0 || selectedNoteIds.length > 0;
+  if (!hasSel) return;
+  copySelected();
+  var total = selectedMediaIds.length + selectedNoteIds.length;
+  pushUndo();
+  _skipUndoPush = true;
+  selectedMediaIds.slice().forEach(function(id) { deleteNode(id); });
+  selectedNoteIds.slice().forEach(function(id) { deleteNote(id); });
+  _skipUndoPush = false;
+  toast('已剪切 ' + total + ' 个节点', '');
+}
+
+function pasteNodes() {
+  if (!clipboard || !clipboard.nodes || !clipboard.nodes.length) return;
+  pushUndo();
+  clearSelection();
+  var idMap = {};
+  clipboard.nodes.forEach(function(item) {
+    var oldId = item.data.id;
+    var newId = (item.type==='media' ? (item.data.type==='script'?'scr_':item.data.type==='frame'?'frm_':'md_') : 'note_') + (item.type==='media' ? ++mediaIdCounter : ++noteIdCounter);
+    idMap[oldId] = newId;
+    if (item.type === 'media') {
+      var nd = JSON.parse(JSON.stringify(item.data));
+      nd.id = newId; nd.x += 60; nd.y += 60; nd.nameLocked = false;
+      if (nd.type==='script') nd.outputText = '';
+      if (nd.type==='frame') { nd.frameOutputRaw = ''; nd.frameOutputJson = null; nd.frameError = ''; }
+      mediaNodes.push(nd); createNodeEl(nd);
+    } else {
+      var nn = JSON.parse(JSON.stringify(item.data));
+      nn.id = newId; nn.x += 60; nn.y += 60; nn.locked = false;
+      notes.push(nn); createNoteEl(nn);
+    }
+  });
+  if (clipboard.connections) {
+    clipboard.connections.forEach(function(c) {
+      var newSrc = idMap[c.sourceId], newTgt = idMap[c.targetId];
+      if (newSrc && newTgt) addConnection(newSrc, newTgt);
+    });
+  }
+  autoSave();
+  toast('已粘贴 ' + clipboard.nodes.length + ' 个节点', '');
+}
+window.pasteNodes = pasteNodes;
 var selectedConnectionId = null;
 
 // 连线拖拽
@@ -1258,7 +1344,7 @@ function wouldCreateCycle(fromId, toId) {
   }
   return false;
 }
-function addConnection(srcId, tgtId) {
+function addConnection(srcId, tgtId) { pushUndo();
   if (srcId === tgtId) { console.warn('[addConnection] 自连拒绝 '+srcId); return; }
   if (connections.some(function(c){return c.sourceId===srcId && c.targetId===tgtId;})) { console.warn('[addConnection] 重复连线拒绝 '+srcId+'->'+tgtId); return; }
   if (wouldCreateCycle(srcId, tgtId)) { console.warn('[addConnection] 环路拒绝 '+srcId+'->'+tgtId); return; }
@@ -1270,7 +1356,7 @@ function addConnection(srcId, tgtId) {
   updateConnectionsSvg();
   autoSave();
 }
-function removeConnection(id) {
+function removeConnection(id) { if (!_skipUndoPush) pushUndo();
   connections = connections.filter(function(c){return c.id!==id;});
   if (selectedConnectionId === id) selectedConnectionId = null;
   updateConnectionsSvg();
@@ -1309,7 +1395,7 @@ function refreshSelections() {
 }
 
 // ==================== 节点创建 ====================
-function addMediaNode(wx, wy, type) {
+function addMediaNode(wx, wy, type) { pushUndo();
   var id = (type==='script'?'scr_':type==='frame'?'frm_':'md_') + (++mediaIdCounter);
   var node = {
     id:id, type:type, x:wx, y:wy,
@@ -1326,7 +1412,7 @@ function addMediaNode(wx, wy, type) {
   autoSave();
   return node;
 }
-function addNote(wx, wy) {
+function addNote(wx, wy) { pushUndo();
   var note = { id:'note_'+(++noteIdCounter), x:wx, y:wy, width:200, height:130, text:'', color:'#1a1a2e', fontSize:14, bold:false, lineHeight:1.5, fontColor:'#e0e0e0', underline:false, strikethrough:false, locked:false };
   notes.push(note);
   var el = createNoteEl(note);
@@ -2138,6 +2224,7 @@ viewport.addEventListener('mousedown', function(e) {
     var noteCard = target.closest('.note-card');
     if (noteCard && noteCard.isContentEditable) return;
     // 多选状态 → 编组拖拽
+    pushUndo();
     if ((selectedMediaIds.length + selectedNoteIds.length) > 1) {
       isGroupDragging = true;
       groupDragStart = {};
@@ -2210,7 +2297,7 @@ function isInDragZone(e, el, node) {
   return relX < pad || relX > node.width - pad || relY < pad || relY > node.height - pad;
 }
 
-function startNodeDrag(e, hit, nodeId) {
+function startNodeDrag(e, hit, nodeId) { pushUndo();
   if (selectedMediaIds.length > 1 && selectedMediaIds.indexOf(nodeId) >= 0) {
     isGroupDragging = true;
     groupDragStart = {};
@@ -2497,7 +2584,7 @@ function duplicateNode(node) {
   console.log('[复制节点] 原='+node.id+' 新='+nn.id+' nameLocked已解除');
 }
 
-function deleteNode(id) {
+function deleteNode(id) { if (!_skipUndoPush) pushUndo();
   var el = document.querySelector('.world-node[data-id="'+id+'"]');
   if (el) el.remove();
   connections = connections.filter(function(c){return c.sourceId!==id && c.targetId!==id;});
@@ -2515,11 +2602,22 @@ function deleteNote(id) {
 
 // ==================== 键盘 ====================
 document.addEventListener('keydown', function(e) {
+  // TEXTAREA / contentEditable 内放行原生快捷键
   if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || e.target.isContentEditable) return;
+  // Ctrl+C/X/V/Z
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); copySelected(); }
+    else if (e.key === 'x' || e.key === 'X') { e.preventDefault(); cutSelected(); }
+    else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); pasteNodes(); }
+    else if (e.key === 'z' || e.key === 'Z') { e.preventDefault(); undo(); }
+    return;
+  }
   if (e.key === 'Delete' || e.key === 'Backspace') {
     if (selectedConnectionId) { removeConnection(selectedConnectionId); return; }
+    pushUndo(); _skipUndoPush = true;
     selectedMediaIds.forEach(function(id) { deleteNode(id); });
     selectedNoteIds.forEach(function(id) { deleteNote(id); });
+    _skipUndoPush = false;
   }
   if (e.key === 'Escape') { clearSelection(); }
 });
