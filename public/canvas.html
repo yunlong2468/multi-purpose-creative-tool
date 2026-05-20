@@ -499,10 +499,14 @@ function pushUndo() {
 
 function undo() {
   if (undoStack.length === 0) return;
+  var before = {};
+  mediaNodes.forEach(function(n){ before[n.id]=true; });
+  notes.forEach(function(n){ before[n.id]=true; });
   var snap = undoStack.pop();
   restoreCanvas(snap);
-  selectedMediaIds = mediaNodes.map(function(n){return n.id;});
-  selectedNoteIds = notes.map(function(n){return n.id;});
+  selectedMediaIds = []; selectedNoteIds = [];
+  mediaNodes.forEach(function(n){ if (!before[n.id]) selectedMediaIds.push(n.id); });
+  notes.forEach(function(n){ if (!before[n.id]) selectedNoteIds.push(n.id); });
   refreshSelections();
   toast('已撤销', '');
 }
