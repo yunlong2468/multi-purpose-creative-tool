@@ -14,17 +14,68 @@
 | LLM | OpenAI 兼容 API (分镜生成 + 图片生成) |
 | 代码量 | ~5200 行 |
 
-## 快速开始
+## 快速开始（零基础也能上手）
 
+### 第一步：安装 Node.js
+
+Node.js 是让电脑运行 JavaScript 程序的工具，所有操作都需要它。
+
+1. 打开浏览器，访问 **https://nodejs.org**
+2. 点击左侧绿色的 **LTS** 按钮（长期稳定版），下载安装包
+3. 双击下载的 `.msi` 文件，一路点 **Next** 直到完成
+4. 验证安装：按 `Win+R`，输入 `cmd` 回车，输入以下命令：
+   ```
+   node --version
+   ```
+   如果显示 `v20.x.x` 或 `v22.x.x`，说明安装成功
+
+> **Mac 用户**：下载 `.pkg` 文件，双击安装即可。终端 (`Cmd+空格 → 输入 Terminal`) 中输入 `node --version` 验证。
+
+### 第二步：下载项目
+
+**方式一（推荐，无需 git）**：
+1. 打开 https://github.com/yunlong2468/infinite-canvas-
+2. 点击绿色 **Code** 按钮 → **Download ZIP**
+3. 解压到你喜欢的文件夹（如 `D:\无限画布`）
+
+**方式二（会 git 的用户）**：
 ```bash
 git clone https://github.com/yunlong2468/infinite-canvas-.git
-cd infinite-canvas-
-npm install
-node server.js
-# 打开 http://localhost:3001
 ```
 
-首次启动自动创建空数据库、导入默认 SKILL（分镜关键帧生成器）。
+### 第三步：安装依赖
+
+1. 按 `Win+R`，输入 `cmd` 回车，打开命令提示符
+2. 进入项目文件夹（把路径换成你实际解压的位置）：
+   ```
+   cd "D:\无限画布"
+   ```
+3. 安装依赖包：
+   ```
+   npm install
+   ```
+   看到 `added XX packages` 就完成了。
+
+### 第四步：启动服务
+
+在同一个命令提示符窗口中继续输入：
+```
+node server.js
+```
+看到以下输出就成功了：
+```
+🎨 无限画布 本地后端已启动
+本机访问: http://localhost:3001
+```
+
+### 第五步：打开画布
+
+浏览器访问 **http://localhost:3001**，注册账号即可开始使用。
+
+> **关闭服务**：在命令提示符窗口按 `Ctrl+C`，下次使用重复第四步即可。
+> **局域网共享**：把控制台显示的局域网地址（如 `http://192.168.x.x:3001`）发给同一 WiFi 下的其他人即可。首次使用需以管理员身份运行：`netsh advfirewall firewall add rule name="无限画布3001" dir=in action=allow protocol=TCP localport=3001`
+
+首次启动会自动创建数据库、导入默认分镜生成技能（SKILL）。
 
 ## 已实现功能
 
