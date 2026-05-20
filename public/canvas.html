@@ -501,6 +501,9 @@ function undo() {
   if (undoStack.length === 0) return;
   var snap = undoStack.pop();
   restoreCanvas(snap);
+  selectedMediaIds = mediaNodes.map(function(n){return n.id;});
+  selectedNoteIds = notes.map(function(n){return n.id;});
+  refreshSelections();
   toast('已撤销', '');
 }
 
