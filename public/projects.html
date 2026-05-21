@@ -76,15 +76,36 @@ body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','
     width:100%; padding:2px 0; margin:0 14px;
 }
 .empty-state { text-align:center; padding:60px 20px; color:var(--text2); grid-column:1/-1; }
+/* 左侧导航 */
+#leftNav { position:fixed; left:0; top:0; bottom:0; width:200px; background:var(--panel); border-right:0.5px solid var(--border); z-index:100; display:flex; flex-direction:column; }
+#leftNav .nav-header { padding:20px 16px 12px; font-size:14px; font-weight:700; color:var(--text); }
+#leftNav .nav-item { display:flex; align-items:center; gap:8px; padding:10px 16px; cursor:pointer; font-size:13px; color:var(--text2); transition:all 0.12s; border-left:2px solid transparent; }
+#leftNav .nav-item:hover { background:rgba(255,255,255,0.03); color:var(--text); }
+#leftNav .nav-item.active { color:var(--accent); background:rgba(5,163,197,0.08); border-left-color:var(--accent); }
+#leftNav .nav-footer { margin-top:auto; padding:16px; border-top:0.5px solid var(--border); }
+#leftNav .nav-footer a, #leftNav .nav-footer button { display:block; padding:6px 0; font-size:11px; color:var(--text2); text-decoration:none; cursor:pointer; background:none; border:none; font-family:inherit; }
+#leftNav .nav-footer a:hover, #leftNav .nav-footer button:hover { color:var(--text); }
+#mainWrap { margin-left:200px; }
+#connectedAgentsBtn { font-size:12px; padding:5px 14px; border-radius:6px; border:0.5px solid var(--border); background:rgba(255,255,255,0.04); color:var(--text2); cursor:pointer; font-family:inherit; }
 </style>
 </head>
 <body>
+<!-- 左侧导航 -->
+<div id="leftNav">
+  <div class="nav-header">📋 无限画布</div>
+  <div class="nav-item active" data-mode="canvas" onclick="switchMode('canvas')">🎨 画布项目</div>
+  <div class="nav-item" data-mode="writing" onclick="switchMode('writing')">✍️ 写作项目</div>
+  <div class="nav-footer">
+    <a href="/agents.html">🤖 智能体管理</a>
+    <button onclick="logout()">🚪 退出登录</button>
+  </div>
+</div>
+
+<div id="mainWrap">
 <div class="topbar">
-    <h1>🎨 无限画布</h1>
+    <h1 id="pageTitle">🎨 画布项目</h1>
     <div class="user-area">
-        <a href="/agents.html" style="color:var(--accent);text-decoration:none;font-size:13px;margin-right:8px;">🤖 智能体</a>
         <span class="user" id="usernameDisplay"></span>
-        <button onclick="logout()">退出登录</button>
     </div>
 </div>
 <div class="container">
@@ -93,6 +114,7 @@ body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','
         <button class="btn btn-primary" onclick="createProject()">+ 新建项目</button>
     </div>
     <div class="project-grid" id="projectGrid"><div class="empty-state">加载中...</div></div>
+</div>
 </div>
 
 <script>
@@ -113,50 +135,96 @@ api('GET','/me').then(function(d) {
     document.getElementById('usernameDisplay').textContent = '👤 ' + d.username;
 });
 
+var currentMode = 'canvas';
+
+function switchMode(mode) {
+  console.log('[Projects] 切换模式: '+mode);
+  currentMode = mode;
+  document.querySelectorAll('#leftNav .nav-item').forEach(function(el){ el.classList.remove('active'); });
+  document.querySelector('#leftNav [data-mode="'+mode+'"]').classList.add('active');
+  document.getElementById('pageTitle').textContent = mode==='canvas' ? '🎨 画布项目' : '✍️ 写作项目';
+  document.getElementById('newName').placeholder = mode==='canvas' ? '项目名称（留空自动命名）' : '写作项目名称';
+  loadProjects();
+}
+
 function loadProjects() {
-    api('GET','/projects').then(function(projects) {
+    var apiPath = currentMode==='canvas' ? '/projects' : '/writing-projects';
+    console.log('[Projects] 加载 '+currentMode+' 项目列表');
+    api('GET', apiPath).then(function(projects) {
         var grid = document.getElementById('projectGrid');
         if (!projects || projects.length===0) {
-            grid.innerHTML = '<div class="empty-state"><p style="font-size:16px;margin-bottom:6px;">还没有项目</p><p>点击上方按钮创建你的第一个画布</p></div><div class="card-new" onclick="createProject()"><div class="plus">+</div><div class="label">新建项目</div></div>';
+            var label = currentMode==='canvas' ? '画布' : '写作';
+            grid.innerHTML = '<div class="empty-state"><p style="font-size:16px;margin-bottom:6px;">还没有'+label+'项目</p><p>点击上方按钮创建你的第一个'+label+'项目</p></div><div class="card-new" onclick="createProject()"><div class="plus">+</div><div class="label">新建'+label+'项目</div></div>';
             return;
         }
-        // 加载每个项目的缩略图数据
-        var cards = projects.map(function(p) {
-            var d = new Date(p.updated_at+'Z');
-            var time = formatTime(d);
-            return api('GET','/canvas?projectId='+p.id).then(function(data) {
-                var notesCount = data && data.notes ? data.notes.length : 0;
-                var mediaCount = data && data.mediaNodes ? data.mediaNodes.length : 0;
-                var connCount = data && data.connections ? data.connections.length : 0;
-                return { id:p.id, name:p.name, time:time, notes:notesCount, media:mediaCount, conns:connCount };
-            }).catch(function() {
-                return { id:p.id, name:p.name, time:time, notes:0, media:0, conns:0 };
-            });
-        });
-        Promise.all(cards).then(function(items) {
-            var html = items.map(function(p) {
-                var gradient = getGradient(p.id);
-                return '<div class="project-card" data-id="'+p.id+'">'+
-                    '<div class="card-thumb" style="background:'+gradient+'" onclick="openProject('+p.id+')">'+
-                    '<div class="thumb-content">'+
-                    '<div class="thumb-stat"><div class="num">'+p.notes+'</div><div class="lbl">便签</div></div>'+
-                    '<div class="thumb-stat"><div class="num">'+p.media+'</div><div class="lbl">媒体</div></div>'+
-                    '<div class="thumb-stat"><div class="num">'+p.conns+'</div><div class="lbl">连线</div></div>'+
-                    '</div></div>'+
-                    '<div class="card-name" onclick="openProject('+p.id+')">'+escHtml(p.name)+'</div>'+
-                    '<div class="card-meta">'+p.time+'</div>'+
-                    '<div class="card-actions">'+
-                    '<button onclick="event.stopPropagation();startRename(this,'+p.id+')">✏️ 重命名</button>'+
-                    '<button class="act-delete" onclick="event.stopPropagation();deleteProject('+p.id+')">🗑️ 删除</button>'+
-                    '</div></div>';
-            }).join('');
-            html += '<div class="card-new" onclick="createProject()"><div class="plus">+</div><div class="label">新建项目</div></div>';
-            grid.innerHTML = html;
-        });
+        if (currentMode === 'canvas') {
+            renderCanvasCards(projects, grid);
+        } else {
+            renderWritingCards(projects, grid);
+        }
     });
 }
 
+function renderCanvasCards(projects, grid) {
+    var cards = projects.map(function(p) {
+        var d = new Date(p.updated_at+'Z');
+        var time = formatTime(d);
+        return api('GET','/canvas?projectId='+p.id).then(function(data) {
+            var notesCount = data && data.notes ? data.notes.length : 0;
+            var mediaCount = data && data.mediaNodes ? data.mediaNodes.length : 0;
+            var connCount = data && data.connections ? data.connections.length : 0;
+            return { id:p.id, name:p.name, time:time, notes:notesCount, media:mediaCount, conns:connCount };
+        }).catch(function() {
+            return { id:p.id, name:p.name, time:time, notes:0, media:0, conns:0 };
+        });
+    });
+    Promise.all(cards).then(function(items) {
+        var html = items.map(function(p) {
+            var gradient = getGradient(p.id);
+            return '<div class="project-card" data-id="'+p.id+'">'+
+                '<div class="card-thumb" style="background:'+gradient+'" onclick="openProject('+p.id+')">'+
+                '<div class="thumb-content">'+
+                '<div class="thumb-stat"><div class="num">'+p.notes+'</div><div class="lbl">便签</div></div>'+
+                '<div class="thumb-stat"><div class="num">'+p.media+'</div><div class="lbl">媒体</div></div>'+
+                '<div class="thumb-stat"><div class="num">'+p.conns+'</div><div class="lbl">连线</div></div>'+
+                '</div></div>'+
+                '<div class="card-name" onclick="openProject('+p.id+')">'+escHtml(p.name)+'</div>'+
+                '<div class="card-meta">'+p.time+'</div>'+
+                '<div class="card-actions">'+
+                '<button onclick="event.stopPropagation();startRename(this,'+p.id+')">✏️ 重命名</button>'+
+                '<button class="act-delete" onclick="event.stopPropagation();deleteProject('+p.id+')">🗑️ 删除</button>'+
+                '</div></div>';
+        }).join('');
+        html += '<div class="card-new" onclick="createProject()"><div class="plus">+</div><div class="label">新建画布</div></div>';
+        grid.innerHTML = html;
+    });
+}
+
+function renderWritingCards(projects, grid) {
+    var html = projects.map(function(p) {
+        var d = new Date(p.updated_at+'Z');
+        var time = formatTime(d);
+        var genreLabel = p.genre || '未分类';
+        var statusLabel = {drafting:'草稿',outlining:'大纲中',writing:'写作中',paused:'已暂停',completed:'已完成'}[p.status]||'草稿';
+        return '<div class="project-card" data-id="'+p.id+'" onclick="openWriting('+p.id+')">'+
+            '<div class="card-thumb" style="background:linear-gradient(135deg, #2e1a2e 0%, #3e1630 50%, #600f40 100%);">'+
+            '<div class="thumb-content">'+
+            '<div class="thumb-stat"><div class="num" style="font-size:22px;">'+escHtml(genreLabel)+'</div><div class="lbl">类型</div></div>'+
+            '<div class="thumb-stat"><div class="num">'+(p.target_words?Math.round(p.target_words/10000)+'w':'?')+'</div><div class="lbl">目标字数</div></div>'+
+            '</div></div>'+
+            '<div class="card-name">'+escHtml(p.title||'未命名写作')+'</div>'+
+            '<div class="card-meta">'+time+' · '+statusLabel+'</div>'+
+            '<div class="card-actions">'+
+            '<button onclick="event.stopPropagation();startRename(this,'+p.id+')">✏️ 重命名</button>'+
+            '<button class="act-delete" onclick="event.stopPropagation();deleteProject('+p.id+')">🗑️ 删除</button>'+
+            '</div></div>';
+    }).join('');
+    html += '<div class="card-new" onclick="createProject()"><div class="plus">+</div><div class="label">新建写作</div></div>';
+    grid.innerHTML = html;
+}
+
 function openProject(id) { window.location.href = '/canvas.html?pid=' + (parseInt(id) * 1114514); }
+function openWriting(id) { window.location.href = '/write.html?pid=' + (parseInt(id) * 1114514); }
 
 var gradients = [
     'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
@@ -181,7 +249,8 @@ function startRename(btn, id) {
     input.focus(); input.select();
 }
 function finishRename(id, name) {
-    api('PUT','/projects/'+id, { name:name }).then(function() { loadProjects(); });
+    var apiPath = currentMode==='canvas' ? '/projects/'+id : '/writing-projects/'+id;
+    api('PUT', apiPath, { name:name, title:name }).then(function() { loadProjects(); });
 }
 function showConfirm(msg, cb) {
   var ov = document.createElement('div');
@@ -198,16 +267,27 @@ function showConfirm(msg, cb) {
 }
 function deleteProject(id) {
     showConfirm('确定要删除此项目吗？所有数据将被永久删除。', function(ok) {
-        if (ok) { api('DELETE','/projects/'+id).then(function() { loadProjects(); }); }
+        if (!ok) return;
+        var apiPath = currentMode==='canvas' ? '/projects/'+id : '/writing-projects/'+id;
+        console.log('[Projects] 删除项目 mode='+currentMode+' id='+id);
+        api('DELETE', apiPath).then(function() { loadProjects(); });
     });
 }
 function createProject() {
     var name = document.getElementById('newName').value.trim();
-    api('POST','/projects', { name:name }).then(function(p) {
-        document.getElementById('newName').value = '';
-        if (p && p.id) window.location.href = '/canvas.html?pid=' + (p.id * 1114514);
-        else loadProjects();
-    });
+    if (currentMode === 'canvas') {
+        api('POST','/projects', { name:name }).then(function(p) {
+            document.getElementById('newName').value = '';
+            if (p && p.id) window.location.href = '/canvas.html?pid=' + (p.id * 1114514);
+            else loadProjects();
+        });
+    } else {
+        api('POST','/writing-projects', { title:name||'未命名写作' }).then(function(p) {
+            document.getElementById('newName').value = '';
+            if (p && p.id) window.location.href = '/write.html?pid=' + (p.id * 1114514);
+            else loadProjects();
+        });
+    }
 }
 function formatTime(d) {
     var now = new Date();

@@ -181,6 +181,52 @@ app.delete('/api/projects/:id', auth, (req, res) => {
     res.json({ ok: true });
 });
 
+// ==================== 写作项目 ====================
+app.get('/api/writing-projects', auth, (req, res) => {
+    const projects = queryAll('SELECT * FROM writing_projects WHERE user_id=? ORDER BY updated_at DESC', [req.userId]);
+    res.json(projects);
+});
+app.post('/api/writing-projects', auth, (req, res) => {
+    const { title } = req.body;
+    const id = dbRun('INSERT INTO writing_projects (user_id, title) VALUES (?,?)', [req.userId, title||'未命名写作']);
+    // 创建默认主Agent配置
+    dbRun('INSERT OR IGNORE INTO writing_agent_config (project_id, agent_type, model_name) VALUES (?,?,?)', [id, 'orchestrator', 'deepseek-v4-pro']);
+    saveDB();
+    res.json({ id, title });
+});
+app.put('/api/writing-projects/:id', auth, (req, res) => {
+    const { title, genre, sub_genre, target_words, style_ref, status } = req.body;
+    var sets=[], params=[];
+    if (title!==undefined){sets.push('title=?');params.push(title);}
+    if (genre!==undefined){sets.push('genre=?');params.push(genre);}
+    if (sub_genre!==undefined){sets.push('sub_genre=?');params.push(sub_genre);}
+    if (target_words!==undefined){sets.push('target_words=?');params.push(target_words);}
+    if (style_ref!==undefined){sets.push('style_ref=?');params.push(style_ref);}
+    if (status!==undefined){sets.push('status=?');params.push(status);}
+    if (sets.length){sets.push('updated_at=CURRENT_TIMESTAMP');params.push(req.params.id);params.push(req.userId);dbRun('UPDATE writing_projects SET '+sets.join(',')+' WHERE id=? AND user_id=?',params);saveDB();}
+    res.json({ ok:true });
+});
+app.delete('/api/writing-projects/:id', auth, (req, res) => {
+    dbRun('DELETE FROM writing_projects WHERE id=? AND user_id=?', [req.params.id, req.userId]);
+    dbRun('DELETE FROM agent_conversations WHERE project_id=?', [req.params.id]);
+    dbRun('DELETE FROM writing_agent_config WHERE project_id=?', [req.params.id]);
+    saveDB();
+    res.json({ ok:true });
+});
+
+// ==================== Agent 对话 ====================
+app.get('/api/writing-projects/:id/conversations', auth, (req, res) => {
+    const msgs = queryAll('SELECT * FROM agent_conversations WHERE project_id=? ORDER BY created_at LIMIT 500', [req.params.id]);
+    res.json(msgs);
+});
+app.post('/api/writing-projects/:id/conversations', auth, (req, res) => {
+    const { agent_type, role, content, thinking, metadata } = req.body;
+    const id = dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, thinking, metadata) VALUES (?,?,?,?,?,?)',
+        [req.params.id, agent_type||'user', role||'user', content||'', thinking||'', metadata||'{"type":"chat"}']);
+    saveDB();
+    res.json({ id });
+});
+
 // ==================== 画布数据（按 projectId） ====================
 
 app.get('/api/canvas', auth, withProject, (req, res) => {
@@ -821,6 +867,20 @@ async function start() {
     db.run('CREATE TABLE IF NOT EXISTS image_styles (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL, description TEXT DEFAULT \'\', prompt_suffix TEXT NOT NULL, is_builtin INTEGER DEFAULT 0, is_published INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
     db.run('CREATE TABLE IF NOT EXISTS style_comments (id INTEGER PRIMARY KEY AUTOINCREMENT, style_id INTEGER NOT NULL, user_id INTEGER NOT NULL, parent_id INTEGER DEFAULT NULL, content TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (style_id) REFERENCES image_styles(id))');
     db.run('CREATE TABLE IF NOT EXISTS style_likes (style_id INTEGER NOT NULL, user_id INTEGER NOT NULL, vote INTEGER NOT NULL DEFAULT 1, UNIQUE(style_id, user_id), FOREIGN KEY (style_id) REFERENCES image_styles(id))');
+
+    // ==================== 写作模块表 ====================
+    db.run('CREATE TABLE IF NOT EXISTS writing_projects (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, title TEXT DEFAULT \'未命名写作\', genre TEXT DEFAULT \'\', sub_genre TEXT DEFAULT \'\', target_words INTEGER DEFAULT 0, style_ref TEXT DEFAULT \'\', status TEXT DEFAULT \'drafting\', branch_active TEXT DEFAULT \'main\', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+    db.run('CREATE TABLE IF NOT EXISTS writing_agent_config (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, agent_type TEXT NOT NULL, model_name TEXT, temperature REAL, api_endpoint TEXT, api_key TEXT, system_prompt TEXT, max_tokens INTEGER, is_muted INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(project_id, agent_type))');
+    db.run('CREATE TABLE IF NOT EXISTS agent_conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, agent_type TEXT NOT NULL, role TEXT NOT NULL, content TEXT DEFAULT \'\', thinking TEXT DEFAULT \'\', tool_calls TEXT DEFAULT \'\', metadata TEXT DEFAULT \'{"type":"chat"}\', token_used INTEGER DEFAULT 0, status TEXT DEFAULT \'done\', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+    db.run('CREATE TABLE IF NOT EXISTS token_usage_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, project_id INTEGER NOT NULL, agent_type TEXT, model TEXT, input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, cost_input REAL DEFAULT 0.0, cost_output REAL DEFAULT 0.0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+    db.run('CREATE TABLE IF NOT EXISTS token_pricing_config (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, model_name TEXT NOT NULL, input_price_per_million REAL DEFAULT 0.0, output_price_per_million REAL DEFAULT 0.0, cache_hit_price_per_million REAL DEFAULT 0.0, discount_rate REAL DEFAULT 1.0, discount_valid_until TEXT DEFAULT \'\', is_default INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+
+    // 默认token费用配置（DeepSeek V4 2026-05-21 含2.5折至2026-05-31）
+    var hasPricing = queryOne('SELECT id FROM token_pricing_config WHERE is_default=1 LIMIT 1');
+    if (!hasPricing) {
+        dbRun('INSERT INTO token_pricing_config (user_id, model_name, input_price_per_million, output_price_per_million, cache_hit_price_per_million, discount_rate, discount_valid_until, is_default) VALUES (NULL, \'deepseek-v4-pro\', 0.1, 24.0, 0.1, 0.25, \'2026-05-31\', 1)');
+        dbRun('INSERT INTO token_pricing_config (user_id, model_name, input_price_per_million, output_price_per_million, cache_hit_price_per_million, discount_rate, discount_valid_until, is_default) VALUES (NULL, \'deepseek-v4-flash\', 0.02, 2.0, 0.02, 1.0, \'\', 0)');
+    }
 
     // 迁移：给旧表加列
     try { db.run('ALTER TABLE projects ADD COLUMN default_style_id INTEGER DEFAULT NULL'); } catch(e) {}
