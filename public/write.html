@@ -10,7 +10,7 @@
 body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; height:100vh; overflow:hidden; }
 
 /* 左栏：项目树 */
-#projectTree { position:fixed; left:0; top:0; bottom:0; width:240px; background:var(--panel); border-right:0.5px solid var(--border); z-index:100; display:flex; flex-direction:column; }
+#projectTree { position:fixed; left:0; top:0; bottom:0; width:240px; background:var(--panel); border-right:0.5px solid var(--border); z-index:100; display:flex; flex-direction:column; transition:width 0.05s; }
 #projectTree .tree-header { padding:14px 16px; border-bottom:0.5px solid var(--border); display:flex; align-items:center; gap:8px; flex-shrink:0; }
 #projectTree .tree-header h2 { font-size:14px; flex:1; }
 #projectTree .tree-header a { font-size:11px; color:var(--text2); text-decoration:none; padding:3px 8px; border-radius:4px; }
@@ -20,8 +20,14 @@ body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','
 #projectTree .tree-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
 .tree-placeholder { text-align:center; padding:40px 16px; color:var(--text2); font-size:12px; }
 
+/* 可拖拽分隔条 */
+.resize-handle { position:fixed; top:0; bottom:0; width:5px; z-index:110; cursor:col-resize; background:transparent; transition:background 0.15s; }
+.resize-handle:hover, .resize-handle.dragging { background:var(--accent); opacity:0.5; }
+#resizeLeft { left:240px; }
+#resizeRight { right:360px; }
+
 /* 中栏：写作区 */
-#editorArea { position:fixed; left:240px; top:0; right:320px; bottom:0; display:flex; flex-direction:column; }
+#editorArea { position:fixed; left:245px; top:0; right:365px; bottom:0; display:flex; flex-direction:column; }
 #editorArea .editor-topbar { padding:10px 16px; border-bottom:0.5px solid var(--border); display:flex; align-items:center; gap:10px; flex-shrink:0; }
 #editorArea .editor-topbar .chap-title { font-size:13px; color:var(--text2); flex:1; }
 #editorArea .editor-topbar button { padding:4px 10px; border-radius:5px; border:0.5px solid var(--border); background:rgba(255,255,255,0.04); color:var(--text2); cursor:pointer; font-size:11px; font-family:inherit; }
@@ -127,6 +133,10 @@ body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','
     <div id="editableContent" class="editor-textarea" contenteditable="true" style="display:none;"></div>
   </div>
 </div>
+
+<!-- 可拖拽分隔条 -->
+<div class="resize-handle" id="resizeLeft"></div>
+<div class="resize-handle" id="resizeRight"></div>
 
 <!-- 右栏：Agent 面板 -->
 <div id="agentPanel">
@@ -531,6 +541,67 @@ function loadTokenStats() {
     document.getElementById('tokenCost').textContent = '输入:¥'+stats.inputPrice+'/百万 | 输出:¥'+stats.outputPrice+'/百万';
   });
 }
+
+// ==================== 侧边栏拖拽缩放 ====================
+var resizeVars = { active:null, startX:0, startW:0, startW2:0, minLeft:180, maxLeft:500, minRight:260, maxRight:600 };
+
+function initSidebarSizes() {
+  var leftW = parseInt(localStorage.getItem('write_left_width')) || 240;
+  var rightW = parseInt(localStorage.getItem('write_right_width')) || 360;
+  applySidebarSizes(leftW, rightW);
+}
+
+function applySidebarSizes(leftW, rightW) {
+  document.getElementById('projectTree').style.width = leftW+'px';
+  document.getElementById('agentPanel').style.width = rightW+'px';
+  document.getElementById('resizeLeft').style.left = leftW+'px';
+  document.getElementById('resizeRight').style.right = rightW+'px';
+  document.getElementById('editorArea').style.left = (leftW+5)+'px';
+  document.getElementById('editorArea').style.right = (rightW+5)+'px';
+  localStorage.setItem('write_left_width', leftW);
+  localStorage.setItem('write_right_width', rightW);
+}
+
+function startResize(e, handle) {
+  resizeVars.active = handle;
+  resizeVars.startX = e.clientX;
+  if (handle==='left') {
+    resizeVars.startW = parseInt(document.getElementById('projectTree').style.width)||240;
+  } else {
+    resizeVars.startW = parseInt(document.getElementById('agentPanel').style.width)||360;
+  }
+  document.getElementById(handle==='left'?'resizeLeft':'resizeRight').classList.add('dragging');
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+  e.preventDefault();
+}
+
+document.getElementById('resizeLeft').addEventListener('mousedown', function(e) { startResize(e, 'left'); });
+document.getElementById('resizeRight').addEventListener('mousedown', function(e) { startResize(e, 'right'); });
+
+window.addEventListener('mousemove', function(e) {
+  if (!resizeVars.active) return;
+  var leftW = parseInt(document.getElementById('projectTree').style.width)||240;
+  var rightW = parseInt(document.getElementById('agentPanel').style.width)||360;
+  if (resizeVars.active === 'left') {
+    var nw = Math.max(resizeVars.minLeft, Math.min(resizeVars.maxLeft, resizeVars.startW + (e.clientX - resizeVars.startX)));
+    applySidebarSizes(nw, rightW);
+  } else {
+    var nw = Math.max(resizeVars.minRight, Math.min(resizeVars.maxRight, resizeVars.startW - (e.clientX - resizeVars.startX)));
+    applySidebarSizes(leftW, nw);
+  }
+});
+
+window.addEventListener('mouseup', function() {
+  if (!resizeVars.active) return;
+  document.getElementById('resizeLeft').classList.remove('dragging');
+  document.getElementById('resizeRight').classList.remove('dragging');
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  resizeVars.active = null;
+});
+
+initSidebarSizes();
 
 // ==================== SSE-1: 互踢检测
 (function() {
