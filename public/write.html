@@ -36,28 +36,39 @@ body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','
 .editor-placeholder p { font-size:14px; line-height:1.8; }
 
 /* 右栏：Agent 面板 (QQ群聊风格) */
-#agentPanel { position:fixed; right:0; top:0; bottom:0; width:320px; background:var(--panel); border-left:0.5px solid var(--border); z-index:100; display:flex; flex-direction:column; }
-#agentPanel .ap-header { padding:10px 14px; border-bottom:0.5px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
-#agentPanel .ap-header h3 { font-size:13px; }
-#agentPanel .ap-header .online-count { font-size:10px; color:var(--text2); }
-#agentPanel .ap-messages { flex:1; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
-#agentPanel .ap-messages::-webkit-scrollbar { width:4px; }
-#agentPanel .ap-messages::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
+#agentPanel { position:fixed; right:0; top:0; bottom:0; width:360px; background:var(--panel); border-left:0.5px solid var(--border); z-index:100; display:flex; flex-direction:column; }
+#agentPanel .ap-header { padding:10px 14px; border-bottom:0.5px solid var(--border); display:flex; align-items:center; gap:8px; flex-shrink:0; }
+#agentPanel .ap-header .ap-tab { font-size:12px; cursor:pointer; padding:3px 8px; border-radius:4px; transition:all 0.12s; }
+#agentPanel .ap-header .ap-tab.active { color:var(--accent); background:rgba(5,163,197,0.1); }
+#agentPanel .ap-header .ap-tab:hover { background:rgba(255,255,255,0.05); }
+#agentPanel .online-count { font-size:10px; color:var(--text2); }
+#panelChat { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+#panelChat .ap-messages { flex:1; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
+#panelChat .ap-messages::-webkit-scrollbar { width:4px; }
+#panelChat .ap-messages::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
+#panelChat .ap-input { padding:8px 12px; border-top:0.5px solid var(--border); display:flex; gap:6px; flex-shrink:0; }
+#panelChat .ap-input input { flex:1; padding:7px 10px; background:rgba(255,255,255,0.04); border:0.5px solid var(--border); border-radius:16px; color:var(--text); font-size:12px; font-family:inherit; outline:none; }
+#panelChat .ap-input input:focus { border-color:var(--accent); }
+#panelChat .ap-input button { padding:4px 12px; border-radius:14px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:12px; font-family:inherit; }
 
 /* 聊天消息 */
 .msg { display:flex; gap:6px; max-width:100%; animation:fadeIn 0.2s; }
 @keyframes fadeIn { from{opacity:0;transform:translateY(4px);} to{opacity:1;transform:translateY(0);} }
 .msg .avatar { width:28px; height:28px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:14px; margin-top:2px; }
-.msg .bubble { padding:6px 10px; border-radius:8px; font-size:12px; line-height:1.55; word-break:break-word; max-width:calc(100% - 40px); }
+.msg .bubble { padding:8px 12px; border-radius:10px; font-size:12px; line-height:1.55; word-break:break-word; max-width:calc(100% - 40px); overflow-wrap:break-word; }
 .msg.system-msg { justify-content:center; }
-.msg.system-msg .sys-text { font-size:10px; color:var(--text2); background:rgba(255,255,255,0.03); padding:2px 8px; border-radius:10px; }
+.msg.system-msg .sys-text { font-size:10px; color:var(--text2); background:rgba(255,255,255,0.03); padding:2px 8px; border-radius:10px; max-width:280px; text-align:center; }
 .msg.user-msg { flex-direction:row-reverse; }
 .msg.user-msg .bubble { background:var(--accent); color:#fff; }
-.msg.agent-msg .bubble { background:rgba(255,255,255,0.05); }
+.msg.agent-msg .bubble { background:rgba(255,255,255,0.06); }
 .msg.agent-msg .avatar { background:rgba(5,163,197,0.15); }
-.msg .think-toggle { font-size:10px; color:var(--accent); cursor:pointer; margin-top:2px; display:inline-block; }
-.msg .think-body { display:none; font-size:10px; color:var(--text2); background:rgba(0,0,0,0.2); padding:4px 8px; border-radius:4px; margin-top:4px; border-left:2px solid var(--accent); white-space:pre-wrap; }
+.msg .think-toggle { display:block; font-size:10px; color:var(--accent); cursor:pointer; margin-top:4px; padding:2px 6px; border-radius:3px; background:rgba(5,163,197,0.08); border:0.5px solid rgba(5,163,197,0.2); }
+.msg .think-toggle:hover { background:rgba(5,163,197,0.15); }
+.msg .think-body { display:none; font-size:10px; color:var(--text2); background:rgba(0,0,0,0.2); padding:6px 10px; border-radius:4px; margin-top:4px; border-left:2px solid var(--accent); white-space:pre-wrap; max-height:200px; overflow-y:auto; }
 .msg .think-body.show { display:block; }
+
+/* 面板切换 */
+#panelChars { flex:1; display:none; flex-direction:column; overflow-y:auto; padding:8px; }
 
 /* 输入区 */
 #agentPanel .ap-input { padding:8px 12px; border-top:0.5px solid var(--border); display:flex; gap:6px; flex-shrink:0; }
@@ -128,10 +139,10 @@ body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','
   <!-- 聊天面板 -->
   <div id="panelChat">
     <div class="ap-messages" id="agentMessages">
-      <div class="ap-loading">正在连接主Agent...</div>
+      <div class="ap-loading">加载历史对话中...</div>
     </div>
     <div class="ap-input">
-      <input type="text" id="agentInput" placeholder="输入消息..." onkeydown="if(event.key==='Enter')sendAgentMessage()">
+      <input type="text" id="agentInput" placeholder="输入消息或 @Agent..." onkeydown="if(event.key==='Enter')sendAgentMessage()">
       <button onclick="sendAgentMessage()">发送</button>
     </div>
   </div>
@@ -209,23 +220,29 @@ var agentMsgs = [];
 
 function renderAgentMessages() {
   var container = document.getElementById('agentMessages');
+  if (!container) return;
+  if (!agentMsgs.length) {
+    container.innerHTML = '<div class="ap-loading">暂无对话记录<br><span style="font-size:10px;color:var(--text2);">在下方输入消息开始创作</span></div>';
+    return;
+  }
   var html = '';
-  agentMsgs.forEach(function(m, i) {
+  agentMsgs.forEach(function(m) {
     if (m.type === 'system') {
       html += '<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
     } else if (m.role === 'user') {
       html += '<div class="msg user-msg"><div class="bubble">'+escHtml(m.content)+'</div><div class="avatar">👤</div></div>';
     } else {
-      var avatar = m.agent==='orchestrator'?'🎭':m.agent==='outliner'?'📋':m.agent==='crawler'?'🕷️':'🤖';
+      var avatar = m.agent==='orchestrator'?'🎭':m.agent==='outliner'?'📋':m.agent==='character'?'👥':m.agent==='crawler'?'🕷️':m.agent==='dialog'?'💬':m.agent==='reviewer'?'🔍':m.agent==='skill_optimizer'?'🧠':'🤖';
       html += '<div class="msg agent-msg"><div class="avatar" style="font-size:16px;">'+avatar+'</div><div class="bubble">';
+      html += '<div style="font-size:10px;color:var(--accent);margin-bottom:2px;">'+escHtml(m.agent||'agent')+'</div>';
       if (m.thinking) {
-        html += '<span class="think-toggle" onclick="this.nextElementSibling.classList.toggle(\'show\')">💭 思考过程</span>';
+        html += '<span class="think-toggle" onclick="var b=this.nextElementSibling;b.classList.toggle(\'show\');this.textContent=b.classList.contains(\'show\')?\'💭 收起思考\':\'💭 思考过程\'">💭 思考过程</span>';
         html += '<div class="think-body">'+escHtml(m.thinking)+'</div>';
       }
       html += escHtml(m.content)+'</div></div>';
     }
   });
-  container.innerHTML = html || '<div class="ap-loading">等待主Agent消息...</div>';
+  container.innerHTML = html;
   container.scrollTop = container.scrollHeight;
 }
 
@@ -283,17 +300,23 @@ api('GET','/writing-projects').then(function(projects) {
 
 // 加载历史对话
 api('GET','/writing-projects/'+projectId+'/conversations').then(function(msgs) {
+  agentMsgs = [];
   if (msgs && msgs.length) {
     msgs.forEach(function(m) {
       var meta = {};
       try { meta = JSON.parse(m.metadata||'{}'); } catch(e) {}
       agentMsgs.push({
         type: meta.type||'chat', role: m.role, agent: m.agent_type,
-        content: m.content, thinking: m.thinking
+        content: m.content, thinking: m.thinking||''
       });
     });
-    console.log('[Write] 已加载 '+msgs.length+' 条历史消息');
+    console.log('[Write] 已加载 '+msgs.length+' 条历史对话, agentMsgs.length='+agentMsgs.length);
+  } else {
+    console.log('[Write] 该项目暂无历史对话');
   }
+  renderAgentMessages();
+}).catch(function(err) {
+  console.error('[Write] 加载历史对话失败:', err);
   renderAgentMessages();
 });
 
