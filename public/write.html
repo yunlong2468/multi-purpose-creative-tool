@@ -434,6 +434,10 @@ function renderAgentMessages() {
       html += formatAgentContent(m.content)+'</div></div>';
     }
   });
+  if (pendingAgent) {
+    var pa = pendingAgent;
+    html += '<div class="msg agent-msg"><div class="avatar" style="font-size:16px;background:rgba(5,163,197,0.15);">'+pa.icon+'</div><div class="bubble"><div style="font-size:10px;color:var(--accent);margin-bottom:2px;">'+escHtml(pa.label||pa.agent)+'</div>⏳ 思考中...</div></div>';
+  }
   container.innerHTML = '<div class="msg-inner">'+html+'</div>';
   function scrollDown() {
     if (wasAtBottom || agentMsgs.length <= 2) {
@@ -449,6 +453,7 @@ function renderAgentMessages() {
 }
 
 var agentBusy = false;
+var pendingAgent = null; // { agent, label } — 正在等待某个Agent回复
 
 function sendAgentMessage() {
   var inp = document.getElementById('agentInput');
@@ -458,16 +463,13 @@ function sendAgentMessage() {
   inp.disabled = true;
   agentBusy = true;
   console.log('[Write] 用户发送: '+text.substring(0,100));
-  lastSeenMsgIndex = agentMsgs.length; unreadCount = 0; // 用户发送时重置
+  lastSeenMsgIndex = agentMsgs.length; unreadCount = 0;
   agentMsgs.push({ type:'chat', role:'user', content:text });
   renderAgentMessages();
-  // 显示Agent思考中
-  agentMsgs.push({ type:'chat', role:'assistant', agent:'orchestrator', content:'⏳ 思考中...', thinking:'' });
-  renderAgentMessages();
   // 调用LLM
+  pendingAgent = { agent:'orchestrator', label:'主Agent', icon:'🎭' }; renderAgentMessages();
   api('POST','/writing-projects/'+projectId+'/llm-call', { content:text }).then(function(r) {
-    // 移除思考中占位
-    agentMsgs.pop();
+    pendingAgent = null;
     if (r && r.content) {
       agentMsgs.push({ type:'chat', role:'assistant', agent:'orchestrator', content:r.content, thinking:r.thinking||'' });
       console.log('[Write] 主Agent回复长度='+r.content.length+' thinking='+(r.thinking?r.thinking.length:0));
@@ -483,7 +485,7 @@ function sendAgentMessage() {
     inp.disabled = false;
     inp.focus();
   }).catch(function(err) {
-    agentMsgs.pop();
+    pendingAgent = null;
     agentMsgs.push({ type:'system', content:'⚠️ 网络错误: '+(err&&err.message||'未知') });
     console.error('[Write] LLM调用异常:',err);
     renderAgentMessages();
@@ -608,10 +610,9 @@ function generateOutline() {
   console.log('[Write] 触发大纲生成');
   agentBusy = true;
   agentMsgs.push({ type:'system', content:'📋 大纲Agent 已启动，正在分析对话记录生成大纲...' });
-  agentMsgs.push({ type:'chat', role:'assistant', agent:'outliner', content:'⏳ 生成大纲中...', thinking:'' });
-  renderAgentMessages();
+  pendingAgent = { agent:'outliner', label:'大纲Agent', icon:'📋' }; renderAgentMessages();
   api('POST','/writing-projects/'+projectId+'/generate-outline').then(function(r) {
-    agentMsgs.pop();
+    pendingAgent = null;
     if (r && r.content) {
       // 尝试解析JSON大纲
       var outlineJson = null;
@@ -649,7 +650,7 @@ function generateOutline() {
     renderAgentMessages();
     agentBusy = false;
   }).catch(function(err) {
-    agentMsgs.pop();
+    pendingAgent = null;
     agentMsgs.push({ type:'system', content:'⚠️ 大纲生成网络错误' });
     console.error('[Write] 大纲生成异常:',err);
     renderAgentMessages();
