@@ -1309,6 +1309,156 @@ async function start() {
     db.run('CREATE TABLE IF NOT EXISTS foreshadowing (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, name TEXT NOT NULL, description TEXT DEFAULT \'\', status TEXT DEFAULT \'planted\', plant_chapter_id INTEGER, resolve_chapter_id INTEGER, notes TEXT DEFAULT \'\', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, resolved_at TEXT)');
     db.run('CREATE TABLE IF NOT EXISTS writing_versions (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, branch_name TEXT DEFAULT \'main\', parent_version_id INTEGER, snapshot_json TEXT NOT NULL, message TEXT DEFAULT \'\', commit_type TEXT DEFAULT \'manual\', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
     db.run('CREATE TABLE IF NOT EXISTS writing_merge_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, source_branch TEXT, target_branch TEXT, conflicts_json TEXT DEFAULT \'[]\', resolution_json TEXT DEFAULT \'{}\', status TEXT DEFAULT \'pending\', created_at DATETIME DEFAULT CURRENT_TIMESTAMP, resolved_at TEXT)');
+    db.run('CREATE TABLE IF NOT EXISTS user_behavior_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, project_id INTEGER, action_type TEXT NOT NULL, target_type TEXT, target_id INTEGER, before_data TEXT, after_data TEXT, metadata TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+    db.run('CREATE TABLE IF NOT EXISTS writing_quality_ratings (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, chapter_id INTEGER, user_rating INTEGER, edit_distance_ratio REAL, ai_similarity_score REAL, agent_id INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+    db.run('CREATE TABLE IF NOT EXISTS optimized_skills (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name_cn TEXT NOT NULL, name_en TEXT DEFAULT \'\', description TEXT DEFAULT \'\', content TEXT NOT NULL, json_schema TEXT DEFAULT \'\', source TEXT DEFAULT \'auto_generated\', is_enabled INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+
+// ==================== 爬虫Agent ====================
+var CRAWLER_SYSTEM = '你是一个小说数据爬取分析助手。当前无法直接访问网页，请提示用户手动提供目标网站的小说列表信息，或者请用户授权你使用搜索工具。\n\n若用户提供了HTML内容或结构化数据，请提取：书名、作者、简介、热度/排名、字数、标签、封面URL。输出JSON格式：{"书籍":[{"书名":"","作者":"","简介":"","热度":"","字数":"","标签":"","封面":""}]}';
+
+app.post('/api/writing-projects/:id/crawl-books', auth, (req, res) => {
+    var projectId = parseInt(req.params.id);
+    var { platform, html_content } = req.body;
+    console.log('[Writing 爬虫] 项目='+projectId+' 平台='+(platform||'手动'));
+    if (!html_content) return res.status(400).json({ error:'需要提供HTML内容' });
+    callOutlineLLM(projectId, req.userId, CRAWLER_SYSTEM, '请从以下HTML提取小说信息：\n平台：'+(platform||'未知')+'\nHTML：'+html_content.substring(0, 30000), 'crawler', function(result) {
+        if (result.error) return res.status(500).json({ error:result.error });
+        // 尝试解析并存储
+        try {
+            var clean = (result.content||'').replace(/```json\s*|\s*```/g, '').trim();
+            var books = JSON.parse(clean);
+            if (books['书籍']) {
+                books['书籍'].forEach(function(b) {
+                    dbRun('INSERT INTO agent_crawler_data (project_id, platform, book_name, author, cover_url, intro, tags, status) VALUES (?,?,?,?,?,?,?,?)',
+                        [projectId, platform||'', b['书名']||'', b['作者']||'', b['封面']||'', b['简介']||'', JSON.stringify(b['标签']||[]), 'pending']);
+                });
+                saveDB();
+                console.log('[Writing 爬虫] 解析到 '+books['书籍'].length+' 本书');
+            }
+        } catch(e) { console.log('[Writing 爬虫] JSON解析失败:', e.message); }
+        res.json({ content:result.content, parsed:true });
+    });
+});
+
+app.get('/api/writing-projects/:id/crawler-data', auth, (req, res) => {
+    res.json(queryAll('SELECT * FROM agent_crawler_data WHERE project_id=? ORDER BY created_at DESC LIMIT 100', [req.params.id]));
+});
+
+app.put('/api/writing-projects/:id/crawler-data/:bid', auth, (req, res) => {
+    var { status } = req.body;
+    dbRun('UPDATE agent_crawler_data SET status=? WHERE id=?', [status||'approved', req.params.bid]);
+    saveDB();
+    res.json({ ok:true });
+});
+
+// ==================== 超频批量模式 ====================
+var bulkGenerationQueue = {};
+
+app.post('/api/writing-projects/:id/bulk-generate', auth, (req, res) => {
+    var projectId = parseInt(req.params.id);
+    var chapterIds = req.body.chapter_ids;
+    if (!chapterIds || !chapterIds.length) return res.status(400).json({ error:'缺少章节ID列表' });
+    console.log('[Writing 批量] 项目='+projectId+' 章节数='+chapterIds.length);
+    if (bulkGenerationQueue[projectId]) return res.status(400).json({ error:'已有批量任务在运行' });
+
+    var llmAgent = queryOne('SELECT * FROM agents WHERE user_id=? ORDER BY id LIMIT 1', [req.userId]);
+    if (!llmAgent || !llmAgent.api_key) return res.status(400).json({ error:'请先配置智能体' });
+
+    bulkGenerationQueue[projectId] = { total:chapterIds.length, done:0, failed:0, chapterIds:chapterIds, status:'running' };
+
+    function processNext(idx) {
+        if (idx >= chapterIds.length) {
+            bulkGenerationQueue[projectId].status = 'done';
+            console.log('[Writing 批量] 完成 成功='+bulkGenerationQueue[projectId].done+' 失败='+bulkGenerationQueue[projectId].failed);
+            return;
+        }
+        var cid = chapterIds[idx];
+        var ch = queryOne('SELECT * FROM writing_chapters WHERE id=?', [cid]);
+        if (!ch) { bulkGenerationQueue[projectId].failed++; processNext(idx+1); return; }
+
+        var proj = queryOne('SELECT * FROM writing_projects WHERE id=?', [projectId]);
+        var context = '小说：'+(proj?proj.title:'')+'\n类型：'+(proj?proj.genre:'')+'\n章节：'+(ch.title||'')+'\n请撰写本章正文，每章约3000-5000字。';
+        var reqBody = { model:llmAgent.model||'deepseek-v4-pro', messages:[{ role:'system', content:'你是一个专业小说写手，请根据给定的大纲和章节标题撰写高质量的小说正文。只输出正文内容，不要添加额外说明。' },{ role:'user', content:context }], temperature:0.8, stream:false };
+
+        fetch(llmAgent.api_endpoint, {
+            method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+llmAgent.api_key},
+            body:JSON.stringify(reqBody)
+        }).then(function(r){ return r.json(); }).then(function(d) {
+            var reply = (d.choices && d.choices[0] && d.choices[0].message) ? d.choices[0].message.content : '';
+            if (reply) {
+                var wc = reply.replace(/\s/g,'').length;
+                dbRun('UPDATE writing_chapters SET content_text=?, word_count=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [reply, wc, 'draft', cid]);
+                bulkGenerationQueue[projectId].done++;
+            } else { bulkGenerationQueue[projectId].failed++; }
+            saveDB();
+            processNext(idx+1);
+        }).catch(function(err) {
+            console.error('[Writing 批量] 章节'+cid+' 失败:',err.message);
+            bulkGenerationQueue[projectId].failed++;
+            processNext(idx+1);
+        });
+    }
+
+    // 启动串行处理（避免API限流）
+    processNext(0);
+    res.json({ total:chapterIds.length, message:'批量生成已启动，请等待完成。Token消耗较大，建议关注用量。' });
+});
+
+app.get('/api/writing-projects/:id/bulk-status', auth, (req, res) => {
+    var q = bulkGenerationQueue[parseInt(req.params.id)];
+    res.json(q || { total:0, done:0, failed:0, status:'idle' });
+});
+
+// ==================== 技能优化Agent ====================
+app.post('/api/writing-projects/:id/optimize-skill', auth, (req, res) => {
+    var projectId = parseInt(req.params.id);
+    var logs = queryAll('SELECT * FROM user_behavior_logs WHERE user_id=? AND project_id=? ORDER BY created_at DESC LIMIT 100', [req.userId, projectId]);
+    var context = '用户行为日志（最近100条）：\n';
+    logs.forEach(function(l) {
+        context += l.action_type+' '+l.target_type+' '+(l.metadata||'')+'\n';
+    });
+    console.log('[Writing Skill] 分析 '+logs.length+' 条行为日志');
+    var skillPrompt = '你是技能优化专家。根据用户的行为日志，总结用户的偏好模式，设计一段 system prompt（中文，200-500字），作为该用户的定制写作Skill。\n\n要求：\n1. 针对用户的行为习惯进行优化\n2. 包含具体的写作指导、风格偏好、常见指令\n3. 只输出system prompt内容，不要加额外说明';
+    callOutlineLLM(projectId, req.userId, skillPrompt, context, 'skill_optimizer', function(result) {
+        if (result.error) return res.status(500).json({ error:result.error });
+        var nameCn = '写作优化Skill #'+(logs.length);
+        dbRun('INSERT INTO optimized_skills (user_id, name_cn, name_en, content, source) VALUES (?,?,?,?,?)',
+            [req.userId, nameCn, 'writer_optimized_'+Date.now(), result.content||'', 'auto_generated']);
+        saveDB();
+        res.json({ content:result.content, name:nameCn });
+    });
+});
+
+app.get('/api/optimized-skills', auth, (req, res) => {
+    res.json(queryAll('SELECT * FROM optimized_skills WHERE user_id=? ORDER BY updated_at DESC', [req.userId]));
+});
+app.put('/api/optimized-skills/:sid', auth, (req, res) => {
+    var { is_enabled } = req.body;
+    dbRun('UPDATE optimized_skills SET is_enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?', [is_enabled?1:0, req.params.sid, req.userId]);
+    saveDB();
+    res.json({ ok:true });
+});
+
+// ==================== 审核Agent ====================
+var REVIEWER_SYSTEM = '你是小说一致性审核专家。检查小说内容中的矛盾和不一致之处。\n\n请检查以下内容：\n1. 角色行为是否与其性格/背景一致\n2. 剧情是否存在逻辑矛盾\n3. 伏笔是否前后对应\n4. 时间线是否连贯\n5. 同一角色在不同章节中的描述是否一致\n\n输出格式：\n'+
+'问题1: [描述]\n建议: [修改建议]\n\n如果没有问题，回复"✅ 未发现一致性问题"';
+
+app.post('/api/writing-projects/:id/review-chapter', auth, (req, res) => {
+    var projectId = parseInt(req.params.id);
+    var { chapter_id } = req.body;
+    if (!chapter_id) return res.status(400).json({ error:'缺少章节ID' });
+    var ch = queryOne('SELECT * FROM writing_chapters WHERE id=?', [chapter_id]);
+    if (!ch) return res.status(404).json({ error:'章节不存在' });
+    console.log('[Writing 审核] 审核章 id='+chapter_id);
+    var context = '当前章节内容：\n'+(ch.content_text||'').substring(0, 3000)+'\n\n';
+    // 加上前面章节的角色信息
+    var chars = queryAll('SELECT * FROM writing_characters WHERE project_id=?', [projectId]);
+    chars.forEach(function(c) { context += '角色['+c.name+']: '+c.profile_json+'\n'; });
+    callOutlineLLM(projectId, req.userId, REVIEWER_SYSTEM, context, 'reviewer', function(result) {
+        if (result.error) return res.status(500).json({ error:result.error });
+        res.json({ content:result.content });
+    });
+});
 
 // ==================== 版本管理 ====================
 app.get('/api/writing-projects/:id/versions', auth, (req, res) => {
