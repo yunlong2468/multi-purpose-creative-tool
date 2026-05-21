@@ -52,10 +52,15 @@ body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','
 #panelChat .ap-messages { flex:1; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:6px; }
 #panelChat .ap-messages::-webkit-scrollbar { width:4px; }
 #panelChat .ap-messages::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
-#panelChat .ap-input { padding:8px 12px; border-top:0.5px solid var(--border); display:flex; gap:6px; flex-shrink:0; }
+#panelChat .ap-input { padding:8px 12px; border-top:0.5px solid var(--border); display:flex; gap:6px; flex-shrink:0; position:relative; }
 #panelChat .ap-input input { flex:1; padding:7px 10px; background:rgba(255,255,255,0.04); border:0.5px solid var(--border); border-radius:16px; color:var(--text); font-size:12px; font-family:inherit; outline:none; }
 #panelChat .ap-input input:focus { border-color:var(--accent); }
 #panelChat .ap-input button { padding:4px 12px; border-radius:14px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:12px; font-family:inherit; }
+/* 未读消息提示 */
+.unread-badge { position:absolute; bottom:50px; right:12px; background:var(--accent); color:#fff; border-radius:14px; padding:4px 10px; font-size:11px; cursor:pointer; z-index:10; display:none; box-shadow:0 2px 8px rgba(0,0,0,0.4); animation:bounceIn 0.3s; }
+@keyframes bounceIn { from{transform:scale(0.8);opacity:0;} to{transform:scale(1);opacity:1;} }
+.unread-badge.show { display:block; }
+.unread-badge:hover { opacity:0.85; }
 
 /* 聊天消息 */
 .msg { display:flex; gap:6px; max-width:100%; animation:fadeIn 0.2s; }
@@ -158,6 +163,7 @@ body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','
     <div class="ap-messages" id="agentMessages">
       <div class="ap-loading">加载历史对话中...</div>
     </div>
+    <div class="unread-badge" id="unreadBadge" onclick="scrollToUnread()"></div>
     <div class="ap-input">
       <input type="text" id="agentInput" placeholder="输入消息或 @Agent..." onkeydown="if(event.key==='Enter')sendAgentMessage()">
       <button onclick="sendAgentMessage()">发送</button>
@@ -258,9 +264,33 @@ function formatAgentContent(text) {
   return t;
 }
 
+var unreadCount = 0;
+
+function isAtBottom(el) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+}
+
+function scrollToUnread() {
+  var container = document.getElementById('agentMessages');
+  container.scrollTop = container.scrollHeight;
+  unreadCount = 0;
+  updateUnreadBadge();
+}
+
+function updateUnreadBadge() {
+  var badge = document.getElementById('unreadBadge');
+  if (unreadCount > 0) {
+    badge.textContent = unreadCount+' 条新消息';
+    badge.classList.add('show');
+  } else {
+    badge.classList.remove('show');
+  }
+}
+
 function renderAgentMessages() {
   var container = document.getElementById('agentMessages');
   if (!container) return;
+  var wasAtBottom = isAtBottom(container);
   if (!agentMsgs.length) {
     container.innerHTML = '<div class="ap-loading">暂无对话记录<br><span style="font-size:10px;color:var(--text2);">在下方输入消息开始创作</span></div>';
     return;
@@ -283,8 +313,14 @@ function renderAgentMessages() {
     }
   });
   container.innerHTML = html;
-  // 强制滚动到底部（最新消息在底部）
-  setTimeout(function(){ container.scrollTop = container.scrollHeight; }, 50);
+  if (wasAtBottom || agentMsgs.length <= 2) {
+    container.scrollTop = container.scrollHeight;
+    unreadCount = 0;
+    updateUnreadBadge();
+  } else {
+    unreadCount++;
+    updateUnreadBadge();
+  }
 }
 
 var agentBusy = false;
@@ -297,6 +333,7 @@ function sendAgentMessage() {
   inp.disabled = true;
   agentBusy = true;
   console.log('[Write] 用户发送: '+text.substring(0,100));
+  unreadCount = 0; // 用户主动发送时重置未读
   agentMsgs.push({ type:'chat', role:'user', content:text });
   renderAgentMessages();
   // 显示Agent思考中
@@ -356,6 +393,7 @@ api('GET','/writing-projects/'+projectId+'/conversations').then(function(msgs) {
     console.log('[Write] 该项目暂无历史对话');
   }
   renderAgentMessages();
+  setTimeout(function(){ var c=document.getElementById('agentMessages'); if(c){c.scrollTop=c.scrollHeight;unreadCount=0;updateUnreadBadge();} }, 100);
 }).catch(function(err) {
   console.error('[Write] 加载历史对话失败:', err);
   renderAgentMessages();
