@@ -475,8 +475,10 @@ var TABDRAG = {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', tabId);
     var img = new Image(); img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    img.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;pointer-events:none;';
+    document.body.appendChild(img);
     e.dataTransfer.setDragImage(img, 0, 0);
-    requestAnimationFrame(function(){ TABDRAG._moveGhost(e.clientX); });
+    requestAnimationFrame(function(){ TABDRAG._moveGhost(e.clientX); document.body.removeChild(img); });
     document.addEventListener('dragover', TABDRAG._onGlobalDrag);
   },
 
