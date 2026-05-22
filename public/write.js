@@ -692,8 +692,10 @@ function switchChatSubTab(tab) {
 var SKILL = {
   load: function() {
     var body = document.getElementById('skBody');
-    if (!body) return;
+    console.log('[Skill] load called, skBody found:', !!body);
+    if (!body) { console.warn('[Skill] load: skBody element not in DOM'); return; }
     api('GET','/writing-projects/'+projectId+'/skills').then(function(skills) {
+      console.log('[Skill] load response, count:', (skills&&skills.length)||0);
       if (!skills||!skills.length) {
         body.innerHTML = '<div class="sk-empty">暂无技能<br><span style="font-size:10px;">使用技能优化Agent自动生成，或手动创建</span></div>';
         return;
@@ -719,8 +721,11 @@ var SKILL = {
   create: function() {
     showPrompt('新建技能名称:', '', function(name) {
       if (!name||!name.trim()) return;
+      console.log('[Skill] create: name='+name.trim());
       api('POST','/writing-projects/'+projectId+'/skills', { name_cn:name.trim(), content:'' }).then(function(r) {
-        if (r && r.error) { toast('创建失败: '+r.error, 'error'); return; }
+        console.log('[Skill] create response:', r);
+        if (!r) { toast('创建失败: 服务器无响应', 'error'); return; }
+        if (r.error) { toast('创建失败: '+r.error, 'error'); return; }
         toast('技能已创建');
         SKILL.load();
       }).catch(function(e) { console.error('[Skill] 创建失败:', e); toast('创建失败: '+e.message, 'error'); });
