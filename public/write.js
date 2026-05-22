@@ -1159,6 +1159,11 @@ function showUserCtxMenu(e, msgIdx) {
   e.preventDefault();
   var menu = document.getElementById('userCtxMenu');
   menu.setAttribute('data-msg-idx', msgIdx);
+  if (agentBusy || pendingAgent) {
+    menu.innerHTML = '<div class="ctx-item" style="color:var(--text2);cursor:default;">⏳ 智能体思考中，请停止或等待回复完成</div>';
+  } else {
+    menu.innerHTML = '<div class="ctx-item" onclick="undoLastUserMsg()">↩ 撤回</div>';
+  }
   menu.classList.add('show');
   menu.style.left = e.clientX+'px';
   menu.style.top = e.clientY+'px';
