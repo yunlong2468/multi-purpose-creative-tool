@@ -751,8 +751,22 @@ var AGENT_LIST = [
   { type:'skill_optimizer', name:'技能优化', icon:'🧠' },
 ];
 var PROVIDER_OPTIONS = '<option value="deepseek">DeepSeek</option><option value="openai">OpenAI</option><option value="custom">自定义</option>';
+var PROVIDER_DEFAULTS = {
+  deepseek: 'https://api.deepseek.com',
+  openai: 'https://api.openai.com/v1',
+  custom: ''
+};
 
 var APICFG = {
+  onProviderChange: function(agentType) {
+    var sel = document.getElementById('acProvider_'+agentType);
+    var ep = document.getElementById('acEndpoint_'+agentType);
+    if (!sel || !ep) return;
+    var val = sel.value;
+    if (PROVIDER_DEFAULTS[val] && (!ep.value || ep.value===PROVIDER_DEFAULTS[val])) {
+      ep.value = PROVIDER_DEFAULTS[val];
+    }
+  },
   load: function() {
     var body = document.getElementById('acBody');
     if (!body) return;
@@ -760,9 +774,14 @@ var APICFG = {
       var html = '';
       AGENT_LIST.forEach(function(a) {
         var cfg = (configs||[]).find(function(c){ return c.agent_type===a.type; }) || {};
+        var provider = 'custom';
+        if (cfg.api_endpoint) {
+          if (cfg.api_endpoint.indexOf('deepseek.com')>=0) provider='deepseek';
+          else if (cfg.api_endpoint.indexOf('openai.com')>=0) provider='openai';
+        }
         html += '<div class="ac-card">';
         html += '<div class="ac-agent">'+a.icon+' '+a.name+' <span style="font-size:10px;color:var(--text2);">('+a.type+')</span><span class="ac-saved" id="acSaved_'+a.type+'">✓ 已保存</span></div>';
-        html += '<div class="ac-row"><label>供应商</label><select id="acProvider_'+a.type+'">'+PROVIDER_OPTIONS.replace('value="custom"','value="custom" selected')+'</select></div>';
+        html += '<div class="ac-row"><label>供应商</label><select id="acProvider_'+a.type+'" onchange="APICFG.onProviderChange(\''+a.type+'\')">'+PROVIDER_OPTIONS.replace('value="'+provider+'"','value="'+provider+'" selected')+'</select></div>';
         html += '<div class="ac-row"><label>API地址</label><input id="acEndpoint_'+a.type+'" value="'+escHtml(cfg.api_endpoint||'')+'" placeholder="https://api.example.com/v1/chat/completions"></div>';
         html += '<div class="ac-row"><label>API Key</label><input id="acKey_'+a.type+'" type="password" value="'+escHtml(cfg.api_key||'')+'" placeholder="sk-..."></div>';
         html += '<div class="ac-row"><label>模型</label><input id="acModel_'+a.type+'" value="'+escHtml(cfg.model_name||'')+'" placeholder="deepseek-v4-pro"></div>';
