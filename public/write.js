@@ -609,10 +609,10 @@ var RENDER = {
       + '<span class="ch-tab active" onclick="switchChatSubTab(\'chat\')" id="tabSubChat">💬 聊天</span>'
       + '<span class="ch-tab" onclick="switchChatSubTab(\'chars\')" id="tabSubChars">👥 角色</span>'
       + '<span style="flex:1;"></span>'
-      + '<span style="font-size:10px;color:var(--text2);" id="onlineAgents">1人</span>'
+      + '<span style="font-size:11px;color:var(--text2);" id="onlineAgents">1人</span>'
       + '</div>'
       + '<div id="subPanelChat" class="ch-msgs"><div class="ap-loading">加载历史对话中...</div></div>'
-      + '<div id="subPanelChars" class="ch-msgs" style="display:none;"><button onclick="generateCharacters()" id="btnGenChars" style="padding:6px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:11px;font-family:inherit;width:calc(100% - 16px);margin:8px;">🎭 生成角色</button><div id="charList"></div></div>'
+      + '<div id="subPanelChars" class="ch-msgs" style="display:none;"><button onclick="generateCharacters()" id="btnGenChars" style="padding:6px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:12px;font-family:inherit;width:calc(100% - 16px);margin:8px;">🎭 生成角色</button><div id="charList"></div></div>'
       + '<div class="ch-input" id="chatInputArea">'
       + '<div class="unread-badge" id="unreadBadge" onclick="scrollToUnread()"></div>'
       + '<div class="mention-dropdown" id="mentionDropdown"></div>'
@@ -621,12 +621,12 @@ var RENDER = {
       + '<button id="btnStop" onclick="stopAgentCall()" style="display:none;background:rgba(245,63,63,0.15)!important;color:#F53F3F!important;border:0.5px solid rgba(245,63,63,0.3)!important;">⏹ 停止</button>'
       + '</div>'
       + '<div class="tok-bar" id="panelToken" onclick="this.classList.toggle(\'expanded\')">'
-      + '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);"><span>💰 Token</span><span id="tokenToday">加载中</span></div>'
-      + '<div class="tok-detail"><div id="tokenChart" style="font-size:9px;color:var(--text2);"></div><div style="font-size:9px;color:var(--text2);" id="tokenCost"></div></div>'
+      + '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);"><span>💰 Token</span><span id="tokenToday">加载中</span></div>'
+      + '<div class="tok-detail"><div id="tokenChart" style="font-size:10px;color:var(--text2);"></div><div style="font-size:10px;color:var(--text2);" id="tokenCost"></div></div>'
       + '</div></div>';
     // 渲染现有消息
     if (agentMsgs.length) renderAgentMessages();
-    else { var c=document.getElementById('subPanelChat'); if(c)c.innerHTML='<div class="ap-loading">暂无对话记录<br><span style="font-size:10px;color:var(--text2);">在下方输入消息开始创作</span></div>'; }
+    else { var c=document.getElementById('subPanelChat'); if(c)c.innerHTML='<div class="ap-loading">暂无对话记录<br><span style="font-size:11px;color:var(--text2);">在下方输入消息开始创作</span></div>'; }
     loadTokenStats();
   },
 
@@ -635,7 +635,7 @@ var RENDER = {
     writingData.chapterId = tab.chapterId || null;
     activeChapterId = tab.chapterId || null;
     container.innerHTML = ''
-      + '<div class="ed-topbar"><span class="ed-title" id="chapTitle">'+escHtml(title)+'</span><span style="font-size:10px;color:var(--text2);" id="wordCount">字数: 0</span><button onclick="autoSave()">💾 保存</button></div>'
+      + '<div class="ed-topbar"><span class="ed-title" id="chapTitle">'+escHtml(title)+'</span><span style="font-size:11px;color:var(--text2);" id="wordCount">字数: 0</span><button onclick="autoSave()">💾 保存</button></div>'
       + '<div class="ed-toolbar">'
       + '<select onchange="document.execCommand(\'formatBlock\',false,this.value);this.selectedIndex=0;" style="width:80px;"><option value="">正文</option><option value="h2">标题</option><option value="h3">副标题</option></select><span class="sep"></span>'
       + '<button onclick="document.execCommand(\'bold\')"><b>B</b></button><button onclick="document.execCommand(\'italic\')"><i>I</i></button><button onclick="document.execCommand(\'underline\')"><u>U</u></button><span class="sep"></span>'
@@ -728,13 +728,13 @@ function showSkillEditor(s) {
   ov.className = 'prompt-overlay';
   ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:800;display:flex;align-items:center;justify-content:center;';
   ov.innerHTML = '<div style="background:#171717;border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;padding:20px;width:640px;max-height:90vh;display:flex;flex-direction:column;">'
-    +'<div style="font-size:14px;margin-bottom:12px;color:#fff;">✏️ 编辑技能</div>'
+    +'<div style="font-size:15px;margin-bottom:12px;color:#fff;">✏️ 编辑技能</div>'
     +'<div style="overflow-y:auto;flex:1;max-height:70vh;">'
-    +'<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text2);">中文名称</label><input id="skEdNameCn" style="width:100%;padding:6px 8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:12px;font-family:inherit;outline:none;" value="'+escHtml(s.name_cn||'')+'"></div>'
-    +'<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text2);">英文名称</label><input id="skEdNameEn" style="width:100%;padding:6px 8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:12px;font-family:inherit;outline:none;" value="'+escHtml(s.name_en||'')+'"></div>'
-    +'<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text2);">描述</label><input id="skEdDesc" style="width:100%;padding:6px 8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:12px;font-family:inherit;outline:none;" value="'+escHtml(s.description||'')+'"></div>'
-    +'<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text2);">📄 SKILL.md 内容</label><textarea id="skEdContent" style="width:100%;height:200px;padding:8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:11px;font-family:Consolas,Monaco,monospace;outline:none;resize:vertical;white-space:pre-wrap;">'+escHtml(s.content||'')+'</textarea></div>'
-    +'<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text2);">📋 参考 JSON (json_schema)</label><textarea id="skEdSchema" style="width:100%;height:120px;padding:8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:11px;font-family:Consolas,Monaco,monospace;outline:none;resize:vertical;white-space:pre-wrap;">'+escHtml(s.json_schema||'')+'</textarea></div>'
+    +'<div style="margin-bottom:8px;"><label style="font-size:12px;color:var(--text2);">中文名称</label><input id="skEdNameCn" style="width:100%;padding:6px 8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:13px;font-family:inherit;outline:none;" value="'+escHtml(s.name_cn||'')+'"></div>'
+    +'<div style="margin-bottom:8px;"><label style="font-size:12px;color:var(--text2);">英文名称</label><input id="skEdNameEn" style="width:100%;padding:6px 8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:13px;font-family:inherit;outline:none;" value="'+escHtml(s.name_en||'')+'"></div>'
+    +'<div style="margin-bottom:8px;"><label style="font-size:12px;color:var(--text2);">描述</label><input id="skEdDesc" style="width:100%;padding:6px 8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:13px;font-family:inherit;outline:none;" value="'+escHtml(s.description||'')+'"></div>'
+    +'<div style="margin-bottom:8px;"><label style="font-size:12px;color:var(--text2);">📄 SKILL.md 内容</label><textarea id="skEdContent" style="width:100%;height:200px;padding:8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:12px;font-family:Consolas,Monaco,monospace;outline:none;resize:vertical;white-space:pre-wrap;">'+escHtml(s.content||'')+'</textarea></div>'
+    +'<div style="margin-bottom:8px;"><label style="font-size:12px;color:var(--text2);">📋 参考 JSON (json_schema)</label><textarea id="skEdSchema" style="width:100%;height:120px;padding:8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:12px;font-family:Consolas,Monaco,monospace;outline:none;resize:vertical;white-space:pre-wrap;">'+escHtml(s.json_schema||'')+'</textarea></div>'
     +'</div>'
     +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-shrink:0;">'
     +'<button style="padding:8px 18px;border-radius:6px;border:0.5px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.06);color:#A1A1AA;cursor:pointer;font-family:inherit;" onclick="this.closest(\'.prompt-overlay\').remove()">取消</button>'
@@ -766,7 +766,7 @@ var SKILL = {
     if (!body) return;
     api('GET','/writing-projects/'+projectId+'/skills').then(function(skills) {
       if (!skills||!skills.length) {
-        body.innerHTML = '<div class="sk-empty">暂无技能<br><span style="font-size:10px;">使用技能优化Agent自动生成，或手动创建</span></div>';
+        body.innerHTML = '<div class="sk-empty">暂无技能<br><span style="font-size:11px;">使用技能优化Agent自动生成，或手动创建</span></div>';
         return;
       }
       var html = '';
@@ -774,7 +774,7 @@ var SKILL = {
         var en = s.is_enabled ? ' enabled' : '';
         var ds = escHtml(JSON.stringify({id:s.id,name_cn:s.name_cn,name_en:s.name_en||'',description:s.description||'',content:s.content||'',json_schema:s.json_schema||''}));
         html += '<div class="sk-card" data-skill="'+ds+'">';
-        html += '<div class="sk-name">'+escHtml(s.name_cn)+(s.name_en?' <span style="color:var(--text2);font-size:10px;">('+escHtml(s.name_en)+')</span>':'')+'</div>';
+        html += '<div class="sk-name">'+escHtml(s.name_cn)+(s.name_en?' <span style="color:var(--text2);font-size:11px;">('+escHtml(s.name_en)+')</span>':'')+'</div>';
         html += '<div class="sk-desc">'+escHtml((s.content||'').substring(0,100)||'无内容')+'</div>';
         html += '<div class="sk-actions">';
         html += '<button class="'+en+'" onclick="SKILL.toggle('+s.id+')">'+(s.is_enabled?'✓ 已启用':'启用')+'</button>';
@@ -858,7 +858,7 @@ var APICFG = {
           else if (cfg.api_endpoint.indexOf('openai.com')>=0) provider='openai';
         }
         html += '<div class="ac-card">';
-        html += '<div class="ac-agent">'+a.icon+' '+a.name+' <span style="font-size:10px;color:var(--text2);">('+a.type+')</span><span class="ac-saved" id="acSaved_'+a.type+'">✓ 已保存</span></div>';
+        html += '<div class="ac-agent">'+a.icon+' '+a.name+' <span style="font-size:11px;color:var(--text2);">('+a.type+')</span><span class="ac-saved" id="acSaved_'+a.type+'">✓ 已保存</span></div>';
         html += '<div class="ac-row"><label>供应商</label><select id="acProvider_'+a.type+'" onchange="APICFG.onProviderChange(\''+a.type+'\')">'+PROVIDER_OPTIONS.replace('value="'+provider+'"','value="'+provider+'" selected')+'</select></div>';
         html += '<div class="ac-row"><label>API地址</label><input id="acEndpoint_'+a.type+'" value="'+escHtml(cfg.api_endpoint||'')+'" placeholder="https://api.example.com/v1/chat/completions"></div>';
         html += '<div class="ac-row"><label>API Key</label><input id="acKey_'+a.type+'" type="password" value="'+escHtml(cfg.api_key||'')+'" placeholder="sk-..."></div>';
@@ -996,14 +996,14 @@ function formatAgentContent(text) {
   var tables = [];
   t = t.replace(/(\|[^\n]+\|\n)+\|?[\s]*(\|[-:| ]+\|\n)+\|?[\s]*(\|[^\n]+\|\n?)+/g, function(m) { tables.push(m.trim()); return '%%TABLE_'+(tables.length-1)+'%%'; });
   t = t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  t = t.replace(/^###\s+(.+)$/gm, '<h4 style="margin:8px 0 4px;font-size:13px;">$1</h4>');
-  t = t.replace(/^##\s+(.+)$/gm, '<h3 style="margin:10px 0 6px;font-size:14px;">$1</h3>');
+  t = t.replace(/^###\s+(.+)$/gm, '<h4 style="margin:8px 0 4px;font-size:14px;">$1</h4>');
+  t = t.replace(/^##\s+(.+)$/gm, '<h3 style="margin:10px 0 6px;font-size:15px;">$1</h3>');
   t = t.replace(/^[-*]{3,}\s*$/gm, '<hr style="border:0.5px solid var(--border);margin:8px 0;">');
   t = t.replace(/\*\*\s*(.+?)\s*\*\*/g, '<b>$1</b>');
   t = '<p>'+t.split(/\n\n+/).join('</p><p>')+'</p>';
   tables.forEach(function(tbl,i) {
     var rows = tbl.split('\n').filter(function(r){ return r.indexOf('|')>=0&&!r.match(/^\|?[\s]*[-:| ]+\|?[\s]*$/); });
-    var html = '<table style="border-collapse:collapse;width:100%;margin:6px 0;font-size:11px;"><tbody>';
+    var html = '<table style="border-collapse:collapse;width:100%;margin:6px 0;font-size:12px;"><tbody>';
     rows.forEach(function(row,ri) {
       html += '<tr>';
       var parts = row.replace(/^\|/,'').replace(/\|$/,'').split('|');
@@ -1114,8 +1114,8 @@ function renderSingleMsg(m) {
   var avatar=getAgentIcon(m.agent);
   var parsed = parseOptBtns(m.content, m.agent);
   var contentHtml = parsed.html + parsed.btns;
-  var h='<div class="msg agent-msg"><div class="avatar" style="font-size:16px;">'+avatar+'</div><div class="bubble">';
-  h+='<div style="font-size:10px;color:var(--accent);margin-bottom:2px;cursor:pointer;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
+  var h='<div class="msg agent-msg"><div class="avatar" style="font-size:17px;">'+avatar+'</div><div class="bubble">';
+  h+='<div style="font-size:11px;color:var(--accent);margin-bottom:2px;cursor:pointer;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
   if(m.thinking){h+='<span class="think-toggle" onclick="var b=this.nextElementSibling;b.classList.toggle(\'show\');this.textContent=b.classList.contains(\'show\')?\'💭 收起思考\':\'💭 思考过程\'">💭 思考过程</span>';h+='<div class="think-body">'+formatAgentContent(m.thinking)+'</div>';}
   h+=contentHtml+t+'</div></div>';
   return h;
@@ -1144,7 +1144,7 @@ function renderPendingAgent() {
   var inner=document.querySelector('#subPanelChat .msg-inner');
   var old=inner.querySelector('.msg-thinking'); if(old)old.remove();
   var pa=pendingAgent;
-  var html='<div class="msg agent-msg msg-thinking"><div class="avatar" style="font-size:16px;background:rgba(5,163,197,0.15);">'+pa.icon+'</div><div class="bubble"><div style="font-size:10px;color:var(--accent);margin-bottom:2px;">'+escHtml(pa.label||pa.agent)+'</div><span class="typing-dots"><b></b><b></b><b></b></span></div></div>';
+  var html='<div class="msg agent-msg msg-thinking"><div class="avatar" style="font-size:17px;background:rgba(5,163,197,0.15);">'+pa.icon+'</div><div class="bubble"><div style="font-size:11px;color:var(--accent);margin-bottom:2px;">'+escHtml(pa.label||pa.agent)+'</div><span class="typing-dots"><b></b><b></b><b></b></span></div></div>';
   var sentinel=inner.querySelector('.msg-sentinel');
   if(sentinel)sentinel.insertAdjacentHTML('beforebegin',html);
   else inner.insertAdjacentHTML('beforeend',html);
@@ -1153,7 +1153,7 @@ function renderPendingAgent() {
 function renderAgentMessages() {
   var container=document.getElementById('subPanelChat'); if(!container)return;
   var wasAtBottom=container.scrollHeight-container.scrollTop-container.clientHeight<60;
-  if(!agentMsgs.length){container.innerHTML='<div class="ap-loading">暂无对话记录<br><span style="font-size:10px;color:var(--text2);">在下方输入消息开始创作</span></div>';unreadCount=0;updateUnreadBadge();return;}
+  if(!agentMsgs.length){container.innerHTML='<div class="ap-loading">暂无对话记录<br><span style="font-size:11px;color:var(--text2);">在下方输入消息开始创作</span></div>';unreadCount=0;updateUnreadBadge();return;}
   var lastUserIdx = lastUserMsgIdx();
   var html='';
   agentMsgs.forEach(function(m, i) {
@@ -1167,13 +1167,13 @@ function renderAgentMessages() {
       var avatar=getAgentIcon(m.agent);
       var parsed = parseOptBtns(m.content, m.agent);
   var contentHtml = parsed.html + parsed.btns;
-      html+='<div class="msg agent-msg"><div class="avatar" style="font-size:16px;">'+avatar+'</div><div class="bubble">';
-      html+='<div style="font-size:10px;color:var(--accent);margin-bottom:2px;cursor:pointer;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
+      html+='<div class="msg agent-msg"><div class="avatar" style="font-size:17px;">'+avatar+'</div><div class="bubble">';
+      html+='<div style="font-size:11px;color:var(--accent);margin-bottom:2px;cursor:pointer;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
       if(m.thinking){html+='<span class="think-toggle" onclick="var b=this.nextElementSibling;b.classList.toggle(\'show\');this.textContent=b.classList.contains(\'show\')?\'💭 收起思考\':\'💭 思考过程\'">💭 思考过程</span>';html+='<div class="think-body">'+formatAgentContent(m.thinking)+'</div>';}
       html+=contentHtml+t+'</div></div>';
     }
   });
-  if(pendingAgent){var pa=pendingAgent;html+='<div class="msg agent-msg"><div class="avatar" style="font-size:16px;background:rgba(5,163,197,0.15);">'+pa.icon+'</div><div class="bubble"><div style="font-size:10px;color:var(--accent);margin-bottom:2px;">'+escHtml(pa.label||pa.agent)+'</div><span class="typing-dots"><b></b><b></b><b></b></span></div></div>';}
+  if(pendingAgent){var pa=pendingAgent;html+='<div class="msg agent-msg"><div class="avatar" style="font-size:17px;background:rgba(5,163,197,0.15);">'+pa.icon+'</div><div class="bubble"><div style="font-size:11px;color:var(--accent);margin-bottom:2px;">'+escHtml(pa.label||pa.agent)+'</div><span class="typing-dots"><b></b><b></b><b></b></span></div></div>';}
   html+='<div class="msg msg-sentinel" style="height:1px;flex-shrink:0;opacity:0;pointer-events:none;"></div>';
   container.innerHTML='<div class="msg-inner">'+html+'</div>';
   function scrollDown(){if(wasAtBottom||agentMsgs.length<=2){container.scrollTop=container.scrollHeight;markAllRead();}else{lastReadMsgIndex=agentMsgs.length-1;unreadCount=0;updateUnreadBadge();}setupUnreadObserver();}
@@ -1329,7 +1329,7 @@ function generateOutline() {
 // ==================== 角色管理 ====================
 function loadCharacters() {
   console.log('[Write] 加载角色列表');
-  api('GET','/writing-projects/'+projectId+'/characters').then(function(chars){var list=document.getElementById('charList');if(!list)return;if(!chars||!chars.length){list.innerHTML='<div style="color:var(--text2);font-size:11px;text-align:center;padding:16px;">暂无角色，点击上方按钮生成</div>';return;}var html='';chars.forEach(function(c){try{var profile=JSON.parse(c.profile_json||'{}');}catch(e){profile={};}html+='<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:8px;font-size:11px;margin-bottom:4px;"><div style="font-weight:600;margin-bottom:4px;">'+escHtml(c.name)+(c.aliases?' ('+escHtml(c.aliases)+')':'')+'</div>'+(profile['外貌']?'<div style="color:var(--text2);font-size:10px;">'+escHtml(profile['外貌'].substring(0,60))+'...</div>':'')+'</div>';});list.innerHTML=html;}).catch(function(e){console.error('[Write] 角色加载失败:',e);});
+  api('GET','/writing-projects/'+projectId+'/characters').then(function(chars){var list=document.getElementById('charList');if(!list)return;if(!chars||!chars.length){list.innerHTML='<div style="color:var(--text2);font-size:12px;text-align:center;padding:16px;">暂无角色，点击上方按钮生成</div>';return;}var html='';chars.forEach(function(c){try{var profile=JSON.parse(c.profile_json||'{}');}catch(e){profile={};}html+='<div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:8px;font-size:12px;margin-bottom:4px;"><div style="font-weight:600;margin-bottom:4px;">'+escHtml(c.name)+(c.aliases?' ('+escHtml(c.aliases)+')':'')+'</div>'+(profile['外貌']?'<div style="color:var(--text2);font-size:11px;">'+escHtml(profile['外貌'].substring(0,60))+'...</div>':'')+'</div>';});list.innerHTML=html;}).catch(function(e){console.error('[Write] 角色加载失败:',e);});
 }
 
 function generateCharacters() {
