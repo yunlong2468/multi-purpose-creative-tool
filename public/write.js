@@ -1188,8 +1188,15 @@ function lastUserMsgIdx() {
 
 var pendingUndoMsgIdx = -1;
 
+var _ctxMenuScrollHide = null;
 function showUserCtxMenu(e, msgIdx) {
   e.preventDefault(); e.stopPropagation();
+  // 滚动聊天区时自动关闭菜单
+  if (!_ctxMenuScrollHide) {
+    _ctxMenuScrollHide = function() { var m=document.getElementById('userCtxMenu'); m.classList.remove('show'); };
+    var chat = document.getElementById('subPanelChat');
+    if (chat) chat.addEventListener('scroll', _ctxMenuScrollHide);
+  }
   var menu = document.getElementById('userCtxMenu');
   menu.setAttribute('data-msg-idx', msgIdx);
   var isLatest = (msgIdx === lastUserMsgIdx());
