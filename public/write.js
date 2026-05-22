@@ -689,6 +689,56 @@ function switchChatSubTab(tab) {
 }
 
 // ===== Skill Config =====
+function showSkillEditorFromCard(sid) {
+  var card;
+  document.querySelectorAll('.sk-card[data-skill]').forEach(function(c) {
+    var raw = c.getAttribute('data-skill');
+    try { var s = JSON.parse(raw); if (s.id===sid) card = c; } catch(e) {}
+  });
+  if (!card) { console.warn('[Skill] edit: card not found for id='+sid); toast('找不到技能数据', 'error'); return; }
+  var raw = card.getAttribute('data-skill');
+  var s;
+  try { s = JSON.parse(raw); } catch(e) { toast('技能数据损坏', 'error'); return; }
+  showSkillEditor(s);
+}
+
+function showSkillEditor(s) {
+  var ov = document.createElement('div');
+  ov.className = 'prompt-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:800;display:flex;align-items:center;justify-content:center;';
+  ov.innerHTML = '<div style="background:#171717;border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;padding:20px;width:640px;max-height:90vh;display:flex;flex-direction:column;">'
+    +'<div style="font-size:14px;margin-bottom:12px;color:#fff;">✏️ 编辑技能</div>'
+    +'<div style="overflow-y:auto;flex:1;max-height:70vh;">'
+    +'<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text2);">中文名称</label><input id="skEdNameCn" style="width:100%;padding:6px 8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:12px;font-family:inherit;outline:none;" value="'+escHtml(s.name_cn||'')+'"></div>'
+    +'<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text2);">英文名称</label><input id="skEdNameEn" style="width:100%;padding:6px 8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:12px;font-family:inherit;outline:none;" value="'+escHtml(s.name_en||'')+'"></div>'
+    +'<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text2);">描述</label><input id="skEdDesc" style="width:100%;padding:6px 8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:12px;font-family:inherit;outline:none;" value="'+escHtml(s.description||'')+'"></div>'
+    +'<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text2);">📄 SKILL.md 内容</label><textarea id="skEdContent" style="width:100%;height:200px;padding:8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:11px;font-family:Consolas,Monaco,monospace;outline:none;resize:vertical;white-space:pre-wrap;">'+escHtml(s.content||'')+'</textarea></div>'
+    +'<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text2);">📋 参考 JSON (json_schema)</label><textarea id="skEdSchema" style="width:100%;height:120px;padding:8px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:#fff;font-size:11px;font-family:Consolas,Monaco,monospace;outline:none;resize:vertical;white-space:pre-wrap;">'+escHtml(s.json_schema||'')+'</textarea></div>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-shrink:0;">'
+    +'<button style="padding:8px 18px;border-radius:6px;border:0.5px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.06);color:#A1A1AA;cursor:pointer;font-family:inherit;" onclick="this.closest(\'.prompt-overlay\').remove()">取消</button>'
+    +'<button style="padding:8px 18px;border-radius:6px;border:none;background:#05A3C5;color:#fff;cursor:pointer;font-family:inherit;" id="skEdSave">💾 保存</button>'
+    +'</div></div>';
+  document.body.appendChild(ov);
+  document.getElementById('skEdSave').addEventListener('click', function() {
+    var data = {
+      name_cn: document.getElementById('skEdNameCn').value.trim(),
+      name_en: document.getElementById('skEdNameEn').value.trim(),
+      description: document.getElementById('skEdDesc').value.trim(),
+      content: document.getElementById('skEdContent').value,
+      json_schema: document.getElementById('skEdSchema').value
+    };
+    if (!data.name_cn) { toast('中文名称不能为空', 'warn'); return; }
+    api('PUT','/writing-projects/'+projectId+'/skills/'+s.id, data).then(function(r) {
+      if (r && r.error) { toast('保存失败: '+r.error, 'error'); return; }
+      toast('技能已更新');
+      ov.remove();
+      SKILL.load();
+    }).catch(function(e) { console.error('[Skill] 保存失败:', e); toast('保存失败', 'error'); });
+  });
+  ov.addEventListener('click', function(e) { if (e.target===ov) ov.remove(); });
+}
+
 var SKILL = {
   load: function() {
     var body = document.getElementById('skBody');
@@ -703,9 +753,10 @@ var SKILL = {
       var html = '';
       skills.forEach(function(s) {
         var en = s.is_enabled ? ' enabled' : '';
-        html += '<div class="sk-card">';
+        var ds = escHtml(JSON.stringify({id:s.id,name_cn:s.name_cn,name_en:s.name_en||'',description:s.description||'',content:s.content||'',json_schema:s.json_schema||''}));
+        html += '<div class="sk-card" data-skill="'+ds+'">';
         html += '<div class="sk-name">'+escHtml(s.name_cn)+(s.name_en?' <span style="color:var(--text2);font-size:10px;">('+escHtml(s.name_en)+')</span>':'')+'</div>';
-        html += '<div class="sk-desc">'+escHtml(s.description||'无描述')+'</div>';
+        html += '<div class="sk-desc">'+escHtml((s.content||'').substring(0,100)||'无内容')+'</div>';
         html += '<div class="sk-actions">';
         html += '<button class="'+en+'" onclick="SKILL.toggle('+s.id+')">'+(s.is_enabled?'✓ 已启用':'启用')+'</button>';
         html += '<button onclick="SKILL.edit('+s.id+')">✏️ 编辑</button>';
@@ -738,14 +789,7 @@ var SKILL = {
     }).catch(function(e) { console.error('[Skill] 切换失败:', e); toast('操作失败', 'error'); });
   },
   edit: function(sid) {
-    showPrompt('编辑技能内容 (content):', '', function(content) {
-      if (!content||!content.trim()) return;
-      api('PUT','/writing-projects/'+projectId+'/skills/'+sid, { content:content }).then(function(r) {
-        if (r && r.error) { toast('更新失败: '+r.error, 'error'); return; }
-        toast('技能已更新');
-        SKILL.load();
-      }).catch(function(e) { console.error('[Skill] 编辑失败:', e); toast('更新失败', 'error'); });
-    });
+    showSkillEditorFromCard(sid);
   },
   remove: function(sid) {
     if (!confirm('确定删除此技能吗？')) return;
