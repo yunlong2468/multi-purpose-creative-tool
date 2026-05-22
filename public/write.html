@@ -217,6 +217,8 @@ function api(method, path, body) {
 }
 
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function toast(m,t){var el=document.getElementById('_toast');if(!el){el=document.createElement('div');el.id='_toast';el.style.cssText='position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:999;padding:8px 20px;border-radius:8px;font-size:13px;font-family:inherit;pointer-events:none;opacity:0;transition:opacity 0.3s;max-width:500px;text-align:center;';document.body.appendChild(el);}el.textContent=m;el.style.background=t==='error'?'rgba(245,63,63,0.9)':t==='warn'?'rgba(245,166,35,0.9)':'rgba(0,180,100,0.9)';el.style.color='#fff';el.style.opacity='1';if(el._t)clearTimeout(el._t);el._t=setTimeout(function(){el.style.opacity='0';},2500);}
+function showPrompt(msg,defVal,cb){var ov=document.createElement('div');ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:800;display:flex;align-items:center;justify-content:center;';ov.innerHTML='<div style="background:#171717;border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;padding:24px;width:380px;"><div style="font-size:14px;margin-bottom:12px;color:#fff;">'+escHtml(msg)+'</div><input id="_promptInp" style="width:100%;padding:8px 12px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-size:13px;font-family:inherit;outline:none;" value="'+escHtml(defVal||'')+'"><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;"><button style="padding:8px 18px;border-radius:6px;border:0.5px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.06);color:#A1A1AA;cursor:pointer;font-family:inherit;" onclick="this.closest(\'div>div\').parentElement.remove()">取消</button><button style="padding:8px 18px;border-radius:6px;border:none;background:#05A3C5;color:#fff;cursor:pointer;font-family:inherit;" onclick="var v=document.getElementById(\'_promptInp\').value;this.closest(\'div>div\').parentElement.remove();(_pCb||function(){})(v)">确定</button></div></div>';document.body.appendChild(ov);window._pCb=cb;ov.addEventListener('click',function(e){if(e.target===ov){ov.remove();}});}
 
 // ==================== 自动保存 ====================
 var saveTimer = null;
@@ -250,15 +252,42 @@ edDiv.addEventListener('input', function() {
 
 // ==================== Agent 消息系统 ====================
 var agentMsgs = [];
-var mentionAgents = [
-  { id:'orchestrator', name:'主Agent', icon:'🎭', desc:'调配师·采访需求' },
-  { id:'outliner', name:'大纲Agent', icon:'📋', desc:'生成卷章大纲' },
-  { id:'character', name:'角色Agent', icon:'👥', desc:'设计角色档案' },
-  { id:'crawler', name:'爬虫Agent', icon:'🕷️', desc:'爬取热门小说' },
-  { id:'dialog', name:'对话Agent', icon:'💬', desc:'角色扮演对话' },
-  { id:'reviewer', name:'审核Agent', icon:'🔍', desc:'一致性检查' },
-  { id:'skill_optimizer', name:'技能优化Agent', icon:'🧠', desc:'分析习惯产出Skill' },
-];
+// Agent 显示名称（可自定义，存localStorage）
+var agentDefaults = {
+  orchestrator: { name:'策划',  icon:'🎭', desc:'调配师·采访需求' },
+  outliner:     { name:'大纲',  icon:'📋', desc:'生成卷章大纲' },
+  character:    { name:'角色',  icon:'👥', desc:'设计角色档案' },
+  crawler:      { name:'爬虫',  icon:'🕷️', desc:'爬取热门小说' },
+  dialog:       { name:'对话',  icon:'💬', desc:'角色扮演对话' },
+  reviewer:     { name:'审核',  icon:'🔍', desc:'一致性检查' },
+  skill_optimizer: { name:'技能优化', icon:'🧠', desc:'分析习惯产出Skill' },
+};
+
+function loadAgentNames() {
+  var saved = localStorage.getItem('write_agent_names');
+  if (saved) { try { var d=JSON.parse(saved); Object.assign(agentDefaults, d); } catch(e){} }
+}
+function saveAgentNames() { localStorage.setItem('write_agent_names', JSON.stringify(agentDefaults)); }
+function getAgentName(id) { return (agentDefaults[id]&&agentDefaults[id].name) || id; }
+function getAgentIcon(id) { return (agentDefaults[id]&&agentDefaults[id].icon) || '🤖'; }
+function renameAgent(id) {
+  var cur = getAgentName(id);
+  showPrompt('修改「'+id+'」的显示名:', cur, function(nn) {
+    if (nn && nn.trim()) { agentDefaults[id].name = nn.trim(); saveAgentNames(); loadMentionList(); loadCharacters(); }
+  });
+}
+
+function loadMentionList() {
+  mentionAgents = [];
+  Object.keys(agentDefaults).forEach(function(id) {
+    var a = agentDefaults[id];
+    mentionAgents.push({ id:id, name:a.name, icon:a.icon, desc:a.desc });
+  });
+}
+var mentionAgents = [];
+
+loadAgentNames();
+loadMentionList();
 
 function handleMentionInput() {
   var inp = document.getElementById('agentInput');
@@ -479,9 +508,9 @@ function countAndUpdateUnread() {
 function renderSingleMsg(m) {
   if (m.type === 'system') return '<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
   if (m.role === 'user') return '<div class="msg user-msg"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble">'+escHtml(m.content)+'</div></div>';
-  var avatar = m.agent==='orchestrator'?'🎭':m.agent==='outliner'?'📋':m.agent==='character'?'👥':m.agent==='crawler'?'🕷️':m.agent==='dialog'?'💬':m.agent==='reviewer'?'🔍':m.agent==='skill_optimizer'?'🧠':'🤖';
+  var avatar = getAgentIcon(m.agent);
   var h = '<div class="msg agent-msg"><div class="avatar" style="font-size:16px;">'+avatar+'</div><div class="bubble">';
-  h += '<div style="font-size:10px;color:var(--accent);margin-bottom:2px;">'+escHtml(m.agent||'agent')+'</div>';
+  h += '<div style="font-size:10px;color:var(--accent);margin-bottom:2px;cursor:pointer;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
   if (m.thinking) {
     h += '<span class="think-toggle" onclick="var b=this.nextElementSibling;b.classList.toggle(\'show\');this.textContent=b.classList.contains(\'show\')?\'💭 收起思考\':\'💭 思考过程\'">💭 思考过程</span>';
     h += '<div class="think-body">'+formatAgentContent(m.thinking)+'</div>';
@@ -533,9 +562,9 @@ function renderAgentMessages() {
     } else if (m.role === 'user') {
       html += '<div class="msg user-msg"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble">'+escHtml(m.content)+'</div></div>';
     } else {
-      var avatar = m.agent==='orchestrator'?'🎭':m.agent==='outliner'?'📋':m.agent==='character'?'👥':m.agent==='crawler'?'🕷️':m.agent==='dialog'?'💬':m.agent==='reviewer'?'🔍':m.agent==='skill_optimizer'?'🧠':'🤖';
+      var avatar = getAgentIcon(m.agent);
       html += '<div class="msg agent-msg"><div class="avatar" style="font-size:16px;">'+avatar+'</div><div class="bubble">';
-      html += '<div style="font-size:10px;color:var(--accent);margin-bottom:2px;">'+escHtml(m.agent||'agent')+'</div>';
+      html += '<div style="font-size:10px;color:var(--accent);margin-bottom:2px;cursor:pointer;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
       if (m.thinking) {
         html += '<span class="think-toggle" onclick="var b=this.nextElementSibling;b.classList.toggle(\'show\');this.textContent=b.classList.contains(\'show\')?\'💭 收起思考\':\'💭 思考过程\'">💭 思考过程</span>';
         html += '<div class="think-body">'+formatAgentContent(m.thinking)+'</div>';
@@ -580,7 +609,7 @@ function sendAgentMessage() {
   appendMsgToDOM(renderSingleMsg(userMsg));
   scrollToBottom();
   // 调用LLM
-  pendingAgent = { agent:'orchestrator', label:'主Agent', icon:'🎭' }; renderPendingAgent();
+  pendingAgent = { agent:'orchestrator', label:getAgentName('orchestrator'), icon:getAgentIcon('orchestrator') }; renderPendingAgent();
   api('POST','/writing-projects/'+projectId+'/llm-call', { content:text }).then(function(r) {
     pendingAgent = null; renderPendingAgent();
     if (r && r.content) {
@@ -728,7 +757,7 @@ function generateOutline() {
   agentBusy = true;
   var sysMsg = { type:'system', content:'📋 大纲Agent 已启动，正在分析对话记录生成大纲...' };
   agentMsgs.push(sysMsg); appendMsgToDOM(renderSingleMsg(sysMsg));
-  pendingAgent = { agent:'outliner', label:'大纲Agent', icon:'📋' }; renderPendingAgent();
+  pendingAgent = { agent:'outliner', label:getAgentName('outliner'), icon:getAgentIcon('outliner') }; renderPendingAgent();
   api('POST','/writing-projects/'+projectId+'/generate-outline').then(function(r) {
     pendingAgent = null; renderPendingAgent();
     if (r && r.content) {
@@ -822,7 +851,7 @@ function generateCharacters() {
   agentBusy = true;
   var cmsg = { type:'system', content:'👥 角色Agent 已启动，正在分析小说设计角色...' };
   agentMsgs.push(cmsg); appendMsgToDOM(renderSingleMsg(cmsg));
-  pendingAgent = { agent:'character', label:'角色Agent', icon:'👥' }; renderPendingAgent();
+  pendingAgent = { agent:'character', label:getAgentName('character'), icon:getAgentIcon('character') }; renderPendingAgent();
   api('POST','/writing-projects/'+projectId+'/generate-characters').then(function(r) {
     pendingAgent = null; renderPendingAgent();
     if (r && r.content) {
