@@ -460,7 +460,13 @@ var TABDRAG = {
     TABDRAG.dragPaneId = paneId;
     TABDRAG.dragIdx = idx;
     TABDRAG.ghostLockY = tabEl.closest('.pane-tabs').getBoundingClientRect().top + 6;
-    tabEl.classList.add('dragging');
+    // rAF 延迟移除原标签，避免打断浏览器 drag 初始化
+    TABDRAG.dragEl = tabEl;
+    TABDRAG.dragParent = tabEl.parentNode;
+    TABDRAG.dragNext = tabEl.nextSibling;
+    requestAnimationFrame(function() {
+      if (TABDRAG.dragEl) { TABDRAG.dragEl.parentNode.removeChild(TABDRAG.dragEl); }
+    });
     var ghost = document.createElement('div');
     ghost.className = 'drag-ghost';
     ghost.textContent = tabEl.textContent.replace(/✕/g,'').trim();
@@ -480,8 +486,12 @@ var TABDRAG = {
     if (TABDRAG.ghost) { TABDRAG.ghost.remove(); TABDRAG.ghost = null; }
     var container = document.getElementById('paneContainer');
     if (container) container.style.boxShadow = '';
-    var el = document.querySelector('.pane-tab.dragging');
-    if (el) el.classList.remove('dragging');
+    // 取消拖拽时插回原标签
+    if (TABDRAG.dragEl && TABDRAG.dragParent) {
+      if (TABDRAG.dragNext) { TABDRAG.dragParent.insertBefore(TABDRAG.dragEl, TABDRAG.dragNext); }
+      else { TABDRAG.dragParent.appendChild(TABDRAG.dragEl); }
+    }
+    TABDRAG.dragEl = null; TABDRAG.dragParent = null; TABDRAG.dragNext = null;
     TABDRAG.dragTab = null;
     TABDRAG.dragPaneId = null;
     TABDRAG.dragIdx = -1;
@@ -493,14 +503,22 @@ var TABDRAG = {
     cleanupDragIndicators();
     var tabsEl = targetPane.el.querySelector('.pane-tabs');
     if (!tabsEl) return;
-    // 用虚影中心位置（而非鼠标）判断落入点
+    // 虚影矩形碰撞箱检测：与哪个标签重叠就往哪插入
     var ghostRect = TABDRAG.ghost ? TABDRAG.ghost.getBoundingClientRect() : null;
-    var gx = ghostRect ? ghostRect.left + ghostRect.width/2 : e.clientX;
-    var tabEls = tabsEl.querySelectorAll('.pane-tab:not(.dragging)');
+    var tabEls = tabsEl.querySelectorAll('.pane-tab');
     var insertIdx = tabEls.length;
-    for (var i=0; i<tabEls.length; i++) {
-      var rect = tabEls[i].getBoundingClientRect();
-      if (gx < rect.left + rect.width/2) { insertIdx = i; break; }
+    if (ghostRect) {
+      for (var i=0; i<tabEls.length; i++) {
+        var tr = tabEls[i].getBoundingClientRect();
+        // AABB 重叠检测
+        if (ghostRect.left < tr.right && ghostRect.right > tr.left) {
+          // 虚影中心在标签左半边→插入标签前，右半边→插入标签后
+          insertIdx = (ghostRect.left + ghostRect.width/2 < tr.left + tr.width/2) ? i : i+1;
+          break;
+        }
+        // 虚影完全在标签左侧→插入此位置
+        if (ghostRect.right <= tr.left) { insertIdx = i; break; }
+      }
     }
     // 后续标签整体右移腾出空间（smooth gap）
     var shiftW = (TABDRAG.dragPaneId===targetPane.id) ? 56 : 64;
@@ -526,6 +544,7 @@ var TABDRAG = {
     } else {
       PANE.moveTab(TABDRAG.dragPaneId, targetPane.id, TABDRAG.dragTab);
     }
+    TABDRAG.dragEl = null; TABDRAG.dragParent = null; TABDRAG.dragNext = null;
   },
 
   _onGlobalDrag: function(e) {
