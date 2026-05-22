@@ -1258,7 +1258,7 @@ function editUserMsg(msgIdx) {
   document.getElementById('edInlineConfirm').addEventListener('click', function() {
     var newText = ta.value.trim();
     if (!newText || newText === oldText) { restoreBubble(); return; }
-    showConfirm('编辑后将替换此消息并删除后续AI回复，确定继续？', function() {
+    showConfirm('编辑后将替换此消息并删除后续 AI 回复。\n确定继续？', function() {
       agentMsgs[msgIdx].content = newText;
       agentMsgs[msgIdx].time = Date.now();
       var endIdx = agentMsgs.length;
