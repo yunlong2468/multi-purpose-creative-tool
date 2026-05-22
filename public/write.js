@@ -460,11 +460,7 @@ var TABDRAG = {
     TABDRAG.dragPaneId = paneId;
     TABDRAG.dragIdx = idx;
     TABDRAG.ghostLockY = tabEl.closest('.pane-tabs').getBoundingClientRect().top + 6;
-    TABDRAG.dragEl = tabEl;
-    // 先从 DOM 移除原标签，其他标签自动合拢填补空位，等拖拽结束后由 _renderPane 恢复
-    TABDRAG.dragParent = tabEl.parentNode;
-    TABDRAG.dragNext = tabEl.nextSibling;
-    tabEl.parentNode.removeChild(tabEl);
+    tabEl.classList.add('dragging');
     var ghost = document.createElement('div');
     ghost.className = 'drag-ghost';
     ghost.textContent = tabEl.textContent.replace(/✕/g,'').trim();
@@ -484,12 +480,8 @@ var TABDRAG = {
     if (TABDRAG.ghost) { TABDRAG.ghost.remove(); TABDRAG.ghost = null; }
     var container = document.getElementById('paneContainer');
     if (container) container.style.boxShadow = '';
-    // 如果拖拽取消（没有 drop），把原标签插回 DOM
-    if (TABDRAG.dragEl && TABDRAG.dragParent) {
-      if (TABDRAG.dragNext) { TABDRAG.dragParent.insertBefore(TABDRAG.dragEl, TABDRAG.dragNext); }
-      else { TABDRAG.dragParent.appendChild(TABDRAG.dragEl); }
-      TABDRAG.dragEl = null; TABDRAG.dragParent = null; TABDRAG.dragNext = null;
-    }
+    var el = document.querySelector('.pane-tab.dragging');
+    if (el) el.classList.remove('dragging');
     TABDRAG.dragTab = null;
     TABDRAG.dragPaneId = null;
     TABDRAG.dragIdx = -1;
@@ -532,8 +524,6 @@ var TABDRAG = {
     } else {
       PANE.moveTab(TABDRAG.dragPaneId, targetPane.id, TABDRAG.dragTab);
     }
-    // drop 成功后 _renderPane 已重建标签栏 DOM，清除引用防止 onEnd 重复插入
-    TABDRAG.dragEl = null; TABDRAG.dragParent = null; TABDRAG.dragNext = null;
   },
 
   _onGlobalDrag: function(e) {
