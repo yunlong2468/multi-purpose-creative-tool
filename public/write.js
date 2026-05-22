@@ -493,12 +493,14 @@ var TABDRAG = {
     cleanupDragIndicators();
     var tabsEl = targetPane.el.querySelector('.pane-tabs');
     if (!tabsEl) return;
-    // 在目标标签栏中找插入位置：鼠标在哪个标签的左半边就在它前面插入
+    // 用虚影中心位置（而非鼠标）判断落入点
+    var ghostRect = TABDRAG.ghost ? TABDRAG.ghost.getBoundingClientRect() : null;
+    var gx = ghostRect ? ghostRect.left + ghostRect.width/2 : e.clientX;
     var tabEls = tabsEl.querySelectorAll('.pane-tab:not(.dragging)');
     var insertIdx = tabEls.length;
     for (var i=0; i<tabEls.length; i++) {
       var rect = tabEls[i].getBoundingClientRect();
-      if (e.clientX < rect.left + rect.width/2) { insertIdx = i; break; }
+      if (gx < rect.left + rect.width/2) { insertIdx = i; break; }
     }
     // 后续标签整体右移腾出空间（smooth gap）
     var shiftW = (TABDRAG.dragPaneId===targetPane.id) ? 56 : 64;
