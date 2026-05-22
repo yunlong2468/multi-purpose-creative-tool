@@ -5,50 +5,164 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>写作模式 - 无限画布</title>
 <style>
-:root { --bg:#0D0D0D; --panel:#171717; --text:#fff; --text2:#A1A1AA; --accent:#05A3C5; --danger:#F53F3F; --warn:#F5A623; --border:rgba(255,255,255,0.08); --radius:12px; }
+:root {
+  --bg:#0D0D0D; --panel:#171717; --text:#fff; --text2:#A1A1AA;
+  --accent:#05A3C5; --danger:#F53F3F; --warn:#F5A623;
+  --border:rgba(255,255,255,0.08); --radius:12px;
+  --tab-h:44px; --act-w:48px;
+}
 * { margin:0; padding:0; box-sizing:border-box; }
-body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; height:100vh; overflow:hidden; display:flex; flex-direction:column; }
-/* 顶栏标签 */
-#tabBar { display:flex; align-items:center; height:36px; background:var(--panel); border-bottom:0.5px solid var(--border); flex-shrink:0; overflow-x:auto; padding:0 4px; gap:1px; }
-#tabBar::-webkit-scrollbar { height:2px; }
-#tabBar::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.06); }
-.bar-tab { display:flex; align-items:center; gap:4px; padding:6px 12px; font-size:12px; color:var(--text2); cursor:pointer; border-radius:4px 4px 0 0; white-space:nowrap; border-bottom:2px solid transparent; transition:all 0.1s; user-select:none; }
-.bar-tab:hover { background:rgba(255,255,255,0.04); color:var(--text); }
-.bar-tab.active { color:var(--text); border-bottom-color:var(--accent); background:rgba(5,163,197,0.06); }
-.bar-tab .tab-close { font-size:10px; padding:1px 4px; border-radius:3px; opacity:0; transition:opacity 0.1s; }
-.bar-tab:hover .tab-close { opacity:0.7; }
-.bar-tab .tab-close:hover { opacity:1; background:rgba(245,63,63,0.2); color:var(--danger); }
-.bar-tab.fixed .tab-close { display:none; }
-.bar-spacer { flex:1; }
-.bar-link { font-size:11px; color:var(--text2); text-decoration:none; padding:4px 10px; border-radius:3px; white-space:nowrap; margin-right:6px; }
-.bar-link:hover { background:rgba(255,255,255,0.05); color:var(--text); }
-/* 内容区 */
-#tabContent { flex:1; overflow:hidden; position:relative; }
-.tab-panel { position:absolute; inset:0; display:none; flex-direction:column; overflow:hidden; }
-.tab-panel.active { display:flex; }
-/* 大纲树 */
-#panelOutline .outline-header { padding:10px 14px; border-bottom:0.5px solid var(--border); font-size:13px; font-weight:600; }
-#panelOutline .tree-body { flex:1; overflow-y:auto; padding:8px; }
-#panelOutline .tree-body::-webkit-scrollbar { width:4px; }
-#panelOutline .tree-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
-.tree-placeholder { text-align:center; padding:40px 16px; color:var(--text2); font-size:12px; }
-/* 编辑器面板 */
-.editor-topbar { padding:10px 16px; border-bottom:0.5px solid var(--border); display:flex; align-items:center; gap:10px; flex-shrink:0; }
-.editor-topbar .chap-title { font-size:13px; color:var(--text2); flex:1; }
-.editor-topbar button { padding:4px 10px; border-radius:5px; border:0.5px solid var(--border); background:rgba(255,255,255,0.04); color:var(--text2); cursor:pointer; font-size:11px; font-family:inherit; }
-.editor-topbar button:hover { background:rgba(255,255,255,0.08); color:var(--text); }
-.editor-body { flex:1; overflow-y:auto; padding:24px 32px; }
-.editor-body::-webkit-scrollbar { width:6px; }
-.editor-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:3px; }
-.editor-textarea { width:100%; min-height:60vh; background:transparent; border:none; color:var(--text); font-size:15px; line-height:2; font-family:'PingFang SC','Microsoft YaHei','Noto Serif SC',serif; outline:none; resize:none; }
-.editor-placeholder { text-align:center; padding:80px 40px; color:var(--text2); }
-.editor-placeholder .icon { font-size:48px; margin-bottom:16px; opacity:0.3; }
-.editor-placeholder p { font-size:14px; line-height:1.8; }
-.editor-toolbar { display:flex; gap:2px; padding:6px 16px; border-bottom:0.5px solid var(--border); flex-shrink:0; flex-wrap:wrap; }
-.editor-toolbar button, .editor-toolbar select { padding:3px 8px; border-radius:4px; border:0.5px solid transparent; background:transparent; color:var(--text2); cursor:pointer; font-size:11px; font-family:inherit; }
-.editor-toolbar button:hover, .editor-toolbar select:hover { background:rgba(255,255,255,0.06); color:var(--text); }
-.editor-toolbar .sep { width:0.5px; background:var(--border); margin:2px 6px; }
-/* 聊天消息 */
+body {
+  background:var(--bg); color:var(--text);
+  font-family:'Inter','Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+  height:100vh; overflow:hidden; display:flex; flex-direction:row;
+}
+
+/* ===== Activity Bar ===== */
+#activityBar {
+  width:var(--act-w); min-width:var(--act-w); background:var(--panel);
+  border-right:0.5px solid var(--border); display:flex; flex-direction:column;
+  align-items:center; padding:4px 0; flex-shrink:0; z-index:10;
+}
+.act-item {
+  width:40px; height:40px; display:flex; align-items:center; justify-content:center;
+  font-size:18px; cursor:pointer; border-radius:8px; margin:2px 0; position:relative;
+  color:var(--text2); transition:all 0.12s; flex-shrink:0;
+}
+.act-item:hover { color:var(--text); background:rgba(255,255,255,0.06); }
+.act-item.active { color:var(--accent); background:rgba(5,163,197,0.12); }
+.act-item .act-badge {
+  position:absolute; top:3px; right:3px; width:8px; height:8px; border-radius:50%;
+  background:var(--accent); display:none;
+}
+.act-item .act-badge.show { display:block; }
+.act-sep { width:30px; height:0.5px; background:var(--border); margin:4px 0; flex-shrink:0; }
+.act-bottom { margin-top:auto; display:flex; flex-direction:column; align-items:center; padding-bottom:4px; }
+.act-bottom a { font-size:14px; color:var(--text2); text-decoration:none; padding:4px; border-radius:4px; }
+.act-bottom a:hover { color:var(--text); background:rgba(255,255,255,0.06); }
+
+/* ===== Pane Container ===== */
+#paneContainer { flex:1; display:flex; flex-direction:row; overflow:hidden; position:relative; }
+
+/* ===== Pane ===== */
+.pane { display:flex; flex-direction:column; overflow:hidden; min-width:280px; flex:1 1 0; }
+.pane + .pane-splitter + .pane { border-left:none; }
+
+/* ===== Pane Tab Bar ===== */
+.pane-tabs {
+  display:flex; align-items:center; height:var(--tab-h); background:var(--panel);
+  border-bottom:0.5px solid var(--border); flex-shrink:0; overflow-x:auto; overflow-y:hidden;
+  padding:0 4px; gap:1px; user-select:none;
+}
+.pane-tabs::-webkit-scrollbar { height:2px; }
+.pane-tabs::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.06); }
+.pane-tab {
+  display:flex; align-items:center; gap:4px; padding:6px 12px; font-size:12px;
+  color:var(--text2); cursor:pointer; border-radius:4px 4px 0 0; white-space:nowrap;
+  border-bottom:2px solid transparent; transition:all 0.1s; height:var(--tab-h);
+  flex-shrink:0;
+}
+.pane-tab:hover { background:rgba(255,255,255,0.04); color:var(--text); }
+.pane-tab.active { color:var(--text); border-bottom-color:var(--accent); background:rgba(5,163,197,0.06); }
+.pane-tab .tab-close {
+  font-size:10px; padding:1px 4px; border-radius:3px; opacity:0; transition:opacity 0.1s;
+  line-height:1;
+}
+.pane-tab:hover .tab-close { opacity:0.6; }
+.pane-tab .tab-close:hover { opacity:1; background:rgba(245,63,63,0.2); color:var(--danger); }
+.pane-tab.drag-over { border-left:2px solid var(--accent); }
+.pane-tab.dragging { opacity:0.4; }
+
+/* ===== Pane Content ===== */
+.pane-content { flex:1; overflow:hidden; position:relative; }
+.pane-content > .panel { position:absolute; inset:0; display:none; flex-direction:column; overflow:hidden; }
+.pane-content > .panel.active { display:flex; }
+
+/* ===== Splitter ===== */
+.pane-splitter {
+  width:5px; min-width:5px; cursor:col-resize; background:rgba(255,255,255,0.03);
+  transition:background 0.15s; flex-shrink:0; position:relative; z-index:5;
+}
+.pane-splitter:hover, .pane-splitter.active { background:var(--accent); }
+
+/* ===== Context Menu ===== */
+#ctxMenu {
+  position:fixed; display:none; background:var(--panel); border:0.5px solid var(--border);
+  border-radius:8px; padding:4px; z-index:999; min-width:160px; box-shadow:0 8px 24px rgba(0,0,0,0.6);
+}
+#ctxMenu.show { display:block; }
+.ctx-item {
+  padding:6px 12px; border-radius:4px; cursor:pointer; font-size:12px; color:var(--text2);
+  white-space:nowrap; transition:background 0.08s; display:flex; align-items:center; gap:8px;
+}
+.ctx-item:hover { background:rgba(5,163,197,0.12); color:var(--text); }
+.ctx-sep { height:0.5px; background:var(--border); margin:2px 6px; }
+
+/* ===== Zen Mode ===== */
+body.zen-mode #activityBar { display:none; }
+body.zen-mode .pane-splitter { display:none; }
+body.zen-mode .pane { border:none; }
+body.zen-mode .pane:not(.zen-active) { display:none; }
+#zenExit {
+  position:fixed; top:8px; right:12px; z-index:1000; display:none;
+  padding:6px 12px; border-radius:6px; border:0.5px solid var(--border);
+  background:var(--panel); color:var(--text2); cursor:pointer; font-size:11px;
+  font-family:inherit;
+}
+#zenExit:hover { background:rgba(245,63,63,0.15); color:var(--danger); }
+body.zen-mode #zenExit { display:block; }
+
+/* ===== Outline Tree ===== */
+.ot-header { padding:10px 14px; border-bottom:0.5px solid var(--border); font-size:13px; font-weight:600; flex-shrink:0; }
+.ot-body { flex:1; overflow-y:auto; padding:8px; }
+.ot-body::-webkit-scrollbar { width:4px; }
+.ot-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
+.ot-placeholder { text-align:center; padding:40px 16px; color:var(--text2); font-size:12px; }
+.ot-vol { margin-bottom:8px; }
+.ot-vol-header { display:flex; align-items:center; padding:4px 6px; border-radius:4px; cursor:pointer; }
+.ot-vol-header:hover { background:rgba(255,255,255,0.03); }
+.ot-vol-arrow { font-size:10px; margin-right:4px; }
+.ot-vol-title { font-size:12px; font-weight:600; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ot-vol-add { font-size:9px; padding:1px 4px; border-radius:3px; border:0.5px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-family:inherit; }
+.ot-chapters { padding-left:12px; }
+.ot-chap { padding:3px 6px; border-radius:4px; cursor:pointer; font-size:11px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ot-chap:hover { background:rgba(255,255,255,0.04); color:var(--text); }
+.ot-chap.active { background:rgba(5,163,197,0.12); color:var(--accent); }
+.ot-btn { width:100%; padding:6px; border-radius:6px; border:1px dashed var(--border); background:transparent; color:var(--text2); cursor:pointer; font-size:11px; font-family:inherit; margin-top:4px; }
+.ot-btn:hover { background:rgba(255,255,255,0.04); color:var(--text); }
+.ot-btn.accent { border:none; background:var(--accent); color:#fff; }
+.ot-btn.accent:hover { opacity:0.9; }
+
+/* ===== Chat Panel ===== */
+.ch-layout { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+.ch-header { padding:8px 14px; border-bottom:0.5px solid var(--border); display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.ch-header .ch-tab { font-size:11px; cursor:pointer; padding:3px 8px; border-radius:4px; transition:all 0.12s; color:var(--text2); }
+.ch-header .ch-tab.active { color:var(--accent); background:rgba(5,163,197,0.1); }
+.ch-header .ch-tab:hover { background:rgba(255,255,255,0.05); }
+.ch-msgs { flex:1; overflow-y:auto; padding:10px 12px; }
+.ch-msgs::-webkit-scrollbar { width:4px; }
+.ch-msgs::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
+.ch-input { padding:8px 12px; border-top:0.5px solid var(--border); display:flex; gap:6px; flex-shrink:0; position:relative; }
+.ch-input input { flex:1; padding:7px 10px; background:rgba(255,255,255,0.04); border:0.5px solid var(--border); border-radius:16px; color:var(--text); font-size:12px; font-family:inherit; outline:none; }
+.ch-input input:focus { border-color:var(--accent); }
+.ch-input button { padding:4px 12px; border-radius:14px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:12px; font-family:inherit; }
+.unread-badge {
+  position:absolute; bottom:calc(100% + 4px); right:12px; background:var(--accent);
+  color:#fff; border-radius:14px; padding:4px 10px; font-size:11px; cursor:pointer;
+  z-index:10; display:none; box-shadow:0 2px 8px rgba(0,0,0,0.4); animation:bounceIn 0.3s; white-space:nowrap;
+}
+@keyframes bounceIn { from{transform:scale(0.8);opacity:0;} to{transform:scale(1);opacity:1;} }
+.unread-badge.show { display:block; }
+.mention-dropdown {
+  position:absolute; bottom:46px; left:12px; right:12px; background:var(--panel);
+  border:0.5px solid var(--border); border-radius:8px; max-height:180px; overflow-y:auto;
+  z-index:20; display:none; box-shadow:0 -4px 16px rgba(0,0,0,0.4);
+}
+.mention-dropdown.show { display:block; }
+.mention-dropdown .m-item { padding:7px 10px; cursor:pointer; font-size:11px; display:flex; align-items:center; gap:6px; transition:background 0.08s; }
+.mention-dropdown .m-item:hover { background:rgba(5,163,197,0.12); color:var(--text); }
+
+/* ===== Messages ===== */
 .msg { display:flex; gap:6px; max-width:100%; animation:fadeIn 0.2s; }
 @keyframes fadeIn { from{opacity:0;transform:translateY(4px);} to{opacity:1;transform:translateY(0);} }
 .msg .avatar { width:28px; height:28px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:14px; margin-top:2px; }
@@ -66,158 +180,142 @@ body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','
 .msg .think-body.show { display:block; }
 .msg .bubble p { margin:0 0 6px; line-height:1.6; }
 .msg .bubble p:last-child { margin-bottom:0; }
-.msg-codeblock { background:rgba(0,0,0,0.4); border:0.5px solid rgba(255,255,255,0.1); border-radius:6px; padding:8px 10px; margin:6px 0; font-family:'Consolas','Monaco','Courier New',monospace; font-size:10px; line-height:1.5; white-space:pre-wrap; word-break:break-all; max-height:200px; overflow-y:auto; color:var(--text2); }
-.msg-codeblock::-webkit-scrollbar { width:3px; }
-.msg-codeblock::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
-/* 聊天面板内部 */
-.chat-layout { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-.ap-header { padding:8px 14px; border-bottom:0.5px solid var(--border); display:flex; align-items:center; gap:8px; flex-shrink:0; }
-.ap-header .ap-tab { font-size:11px; cursor:pointer; padding:3px 8px; border-radius:4px; transition:all 0.12s; color:var(--text2); }
-.ap-header .ap-tab.active { color:var(--accent); background:rgba(5,163,197,0.1); }
-.ap-header .ap-tab:hover { background:rgba(255,255,255,0.05); }
-.ap-messages { flex:1; overflow-y:auto; padding:10px 12px; }
-.ap-messages::-webkit-scrollbar { width:4px; }
-.ap-messages::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
 .msg-inner { min-height:100%; display:flex; flex-direction:column; justify-content:flex-end; gap:6px; }
-.ap-input { padding:8px 12px; border-top:0.5px solid var(--border); display:flex; gap:6px; flex-shrink:0; position:relative; }
-.ap-input input { flex:1; padding:7px 10px; background:rgba(255,255,255,0.04); border:0.5px solid var(--border); border-radius:16px; color:var(--text); font-size:12px; font-family:inherit; outline:none; }
-.ap-input input:focus { border-color:var(--accent); }
-.ap-input button { padding:4px 12px; border-radius:14px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:12px; font-family:inherit; }
-.unread-badge { position:absolute; bottom:calc(100% + 4px); right:12px; background:var(--accent); color:#fff; border-radius:14px; padding:4px 10px; font-size:11px; cursor:pointer; z-index:10; display:none; box-shadow:0 2px 8px rgba(0,0,0,0.4); animation:bounceIn 0.3s; white-space:nowrap; }
-@keyframes bounceIn { from{transform:scale(0.8);opacity:0;} to{transform:scale(1);opacity:1;} }
-.unread-badge.show { display:block; }
-.unread-badge:hover { opacity:0.85; }
-.mention-dropdown { position:absolute; bottom:46px; left:12px; right:12px; background:var(--panel); border:0.5px solid var(--border); border-radius:8px; max-height:180px; overflow-y:auto; z-index:20; display:none; box-shadow:0 -4px 16px rgba(0,0,0,0.4); }
-.mention-dropdown.show { display:block; }
-.mention-dropdown .m-item { padding:7px 10px; cursor:pointer; font-size:11px; display:flex; align-items:center; gap:6px; transition:background 0.08s; }
-.mention-dropdown .m-item:hover { background:rgba(5,163,197,0.12); color:var(--text); }
-.mention-dropdown .m-item .m-avatar { width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; }
-.mention-dropdown .m-item .m-name { flex:1; }
-.mention-dropdown .m-item .m-desc { font-size:9px; color:var(--text2); }
-#panelChars { flex:1; display:none; flex-direction:column; overflow-y:auto; padding:8px; }
-#panelToken { border-top:0.5px solid var(--border); padding:6px 10px; flex-shrink:0; cursor:pointer; }
-#panelToken .token-detail { display:none; }
-#panelToken.expanded .token-detail { display:block; }
+.msg-codeblock { background:rgba(0,0,0,0.4); border:0.5px solid rgba(255,255,255,0.1); border-radius:6px; padding:8px 10px; margin:6px 0; font-family:'Consolas','Monaco','Courier New',monospace; font-size:10px; line-height:1.5; white-space:pre-wrap; word-break:break-all; max-height:200px; overflow-y:auto; color:var(--text2); }
+.msg-codeblock::-webkit-scrollbar { width:3px; height:3px; }
+.msg-codeblock::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1); border-radius:2px; }
 .ap-loading { text-align:center; padding:40px; color:var(--text2); font-size:12px; }
+
+/* ===== Editor Panel ===== */
+.ed-topbar { padding:8px 16px; border-bottom:0.5px solid var(--border); display:flex; align-items:center; gap:10px; flex-shrink:0; }
+.ed-topbar .ed-title { font-size:13px; color:var(--text2); flex:1; }
+.ed-topbar button { padding:4px 10px; border-radius:5px; border:0.5px solid var(--border); background:rgba(255,255,255,0.04); color:var(--text2); cursor:pointer; font-size:11px; font-family:inherit; }
+.ed-topbar button:hover { background:rgba(255,255,255,0.08); color:var(--text); }
+.ed-toolbar { display:flex; gap:2px; padding:6px 16px; border-bottom:0.5px solid var(--border); flex-shrink:0; flex-wrap:wrap; }
+.ed-toolbar button, .ed-toolbar select { padding:3px 8px; border-radius:4px; border:0.5px solid transparent; background:transparent; color:var(--text2); cursor:pointer; font-size:11px; font-family:inherit; }
+.ed-toolbar button:hover, .ed-toolbar select:hover { background:rgba(255,255,255,0.06); color:var(--text); }
+.ed-toolbar .sep { width:0.5px; background:var(--border); margin:2px 6px; }
+.ed-body { flex:1; overflow-y:auto; padding:24px 32px; }
+.ed-body::-webkit-scrollbar { width:6px; }
+.ed-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:3px; }
+.ed-textarea { width:100%; min-height:60vh; background:transparent; border:none; color:var(--text); font-size:15px; line-height:2; font-family:'PingFang SC','Microsoft YaHei','Noto Serif SC',serif; outline:none; resize:none; }
+.ed-placeholder { text-align:center; padding:80px 40px; color:var(--text2); }
+.ed-placeholder .icon { font-size:48px; margin-bottom:16px; opacity:0.3; }
+.ed-placeholder p { font-size:14px; line-height:1.8; }
+
+/* ===== Token Panel ===== */
+.tok-bar { border-top:0.5px solid var(--border); padding:6px 10px; flex-shrink:0; cursor:pointer; }
+.tok-bar .tok-detail { display:none; }
+.tok-bar.expanded .tok-detail { display:block; }
+
+/* ===== Skill Config Panel ===== */
+.sk-header { padding:10px 14px; border-bottom:0.5px solid var(--border); font-size:13px; font-weight:600; flex-shrink:0; display:flex; align-items:center; justify-content:space-between; }
+.sk-header button { padding:4px 10px; border-radius:5px; border:0.5px solid var(--border); background:var(--accent); color:#fff; cursor:pointer; font-size:11px; font-family:inherit; }
+.sk-body { flex:1; overflow-y:auto; padding:8px; }
+.sk-body::-webkit-scrollbar { width:4px; }
+.sk-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
+.sk-card { background:rgba(255,255,255,0.03); border:0.5px solid var(--border); border-radius:8px; padding:10px; margin-bottom:8px; font-size:12px; }
+.sk-card .sk-name { font-weight:600; margin-bottom:4px; }
+.sk-card .sk-desc { color:var(--text2); font-size:10px; margin-bottom:6px; }
+.sk-card .sk-actions { display:flex; gap:4px; }
+.sk-card .sk-actions button { padding:2px 8px; border-radius:4px; border:0.5px solid var(--border); background:transparent; color:var(--text2); cursor:pointer; font-size:10px; font-family:inherit; }
+.sk-card .sk-actions button:hover { background:rgba(255,255,255,0.08); color:var(--text); }
+.sk-card .sk-actions button.enabled { background:rgba(5,163,197,0.15); color:var(--accent); border-color:var(--accent); }
+.sk-card .sk-actions button.danger:hover { background:rgba(245,63,63,0.15); color:var(--danger); border-color:var(--danger); }
+.sk-empty { text-align:center; padding:40px 16px; color:var(--text2); font-size:12px; }
+
+/* ===== API Config Panel ===== */
+.ac-header { padding:10px 14px; border-bottom:0.5px solid var(--border); font-size:13px; font-weight:600; flex-shrink:0; }
+.ac-body { flex:1; overflow-y:auto; padding:8px; }
+.ac-body::-webkit-scrollbar { width:4px; }
+.ac-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
+.ac-card { background:rgba(255,255,255,0.03); border:0.5px solid var(--border); border-radius:8px; padding:10px; margin-bottom:8px; font-size:12px; }
+.ac-card .ac-agent { font-weight:600; margin-bottom:4px; display:flex; align-items:center; gap:6px; }
+.ac-card .ac-row { display:flex; gap:6px; align-items:center; margin:4px 0; }
+.ac-card .ac-row label { font-size:10px; color:var(--text2); min-width:48px; flex-shrink:0; }
+.ac-card .ac-row input, .ac-card .ac-row select { flex:1; padding:3px 6px; background:rgba(255,255,255,0.04); border:0.5px solid var(--border); border-radius:4px; color:var(--text); font-size:11px; font-family:inherit; outline:none; }
+.ac-card .ac-row input:focus, .ac-card .ac-row select:focus { border-color:var(--accent); }
+.ac-card .ac-save { padding:3px 10px; border-radius:4px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:10px; font-family:inherit; margin-top:4px; }
+.ac-card .ac-save:hover { opacity:0.9; }
+.ac-saved { color:rgba(0,180,100,0.8); font-size:10px; margin-left:8px; display:none; }
+
+/* ===== Drag ghost ===== */
+.drag-ghost {
+  position:fixed; pointer-events:none; z-index:1000; opacity:0.85;
+  background:var(--panel); border:0.5px solid var(--accent); border-radius:4px;
+  padding:6px 12px; font-size:12px; color:var(--text); white-space:nowrap;
+  box-shadow:0 4px 16px rgba(0,0,0,0.4);
+}
+
+/* ===== Drop zone indicator ===== */
+.drop-zone {
+  position:absolute; width:60%; height:2px; background:var(--accent);
+  bottom:0; left:20%; z-index:15; display:none; pointer-events:none;
+  box-shadow:0 0 6px var(--accent);
+}
+.drop-zone.show { display:block; }
+
+/* ===== Mobile (<768px) ===== */
+@media (max-width:767px) {
+  :root { --act-w:44px; }
+  #paneContainer { flex-direction:column; }
+  .pane { min-width:0; }
+  .pane-splitter { display:none !important; }
+  .pane-tab .tab-close { opacity:0.6; } /* always show on mobile */
+  .pane-tabs { -webkit-overflow-scrolling:touch; }
+}
 </style>
 </head>
 <body>
-<div id="tabBar">
-  <div class="bar-tab fixed active" data-tab="outline" onclick="switchTab('outline')">📖 大纲</div>
-  <div class="bar-tab fixed" data-tab="chat" onclick="switchTab('chat')">💬 对话</div>
-  <div class="bar-spacer"></div>
-  <a href="/projects.html?mode=writing" class="bar-link">← 返回</a>
-</div>
-<div id="tabContent">
-  <div class="tab-panel active" id="panelOutline">
-    <div class="outline-header">📖 项目大纲</div>
-    <div class="tree-body" id="treeBody"><div class="tree-placeholder">创建写作项目后<br>大纲结构将显示在这里</div></div>
-  </div>
-  <div class="tab-panel" id="panelChat">
-    <div class="chat-layout">
-      <div class="ap-header">
-        <span class="ap-tab active" onclick="switchChatSubTab('chat')" id="tabSubChat">💬 聊天</span>
-        <span class="ap-tab" onclick="switchChatSubTab('chars')" id="tabSubChars">👥 角色</span>
-        <span style="flex:1;"></span>
-        <span style="font-size:10px;color:var(--text2);" id="onlineAgents">1人</span>
-      </div>
-      <div id="subPanelChat" class="ap-messages"><div class="ap-loading">加载历史对话中...</div></div>
-      <div id="subPanelChars" class="ap-messages" style="display:none;"><button onclick="generateCharacters()" id="btnGenChars" style="padding:6px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:11px;font-family:inherit;width:100%;margin:8px;">🎭 生成角色</button><div id="charList"></div></div>
-      <div class="ap-input" id="chatInputArea">
-        <div class="unread-badge" id="unreadBadge" onclick="scrollToUnread()"></div>
-        <div class="mention-dropdown" id="mentionDropdown"></div>
-        <input type="text" id="agentInput" placeholder="输入消息或 @Agent..." onkeydown="handleInputKey(event)" oninput="handleMentionInput()">
-        <button id="btnSend" onclick="sendAgentMessage()">发送</button>
-        <button id="btnStop" onclick="stopAgentCall()" style="display:none;background:rgba(245,63,63,0.15)!important;color:#F53F3F!important;border:0.5px solid rgba(245,63,63,0.3)!important;">⏹ 停止</button>
-      </div>
-      <div id="panelToken" onclick="this.classList.toggle('expanded')">
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text2);"><span>💰 Token</span><span id="tokenToday">加载中</span></div>
-        <div class="token-detail"><div id="tokenChart" style="font-size:9px;color:var(--text2);"></div><div style="font-size:9px;color:var(--text2);" id="tokenCost"></div></div>
-      </div>
-    </div>
-  </div>
-  <div class="tab-panel" id="panelEditor">
-    <div class="editor-topbar"><span class="chap-title" id="chapTitle">选择章节开始写作</span><span style="font-size:10px;color:var(--text2);" id="wordCount">字数: 0</span><button onclick="autoSave()">💾 保存</button></div>
-    <div class="editor-toolbar" id="editorToolbar">
-      <select onchange="document.execCommand('formatBlock',false,this.value);this.selectedIndex=0;" style="width:80px;"><option value="">正文</option><option value="h2">标题</option><option value="h3">副标题</option></select><span class="sep"></span>
-      <button onclick="document.execCommand('bold')"><b>B</b></button><button onclick="document.execCommand('italic')"><i>I</i></button><button onclick="document.execCommand('underline')"><u>U</u></button><span class="sep"></span>
-      <button onclick="document.execCommand('justifyLeft')">左对齐</button><button onclick="document.execCommand('justifyCenter')">居中</button><span class="sep"></span>
-      <button onclick="document.execCommand('insertUnorderedList')">• 列表</button><button onclick="document.execCommand('insertOrderedList')">1. 列表</button>
-    </div>
-    <div class="editor-body"><div class="editor-placeholder" id="editorPlaceholder"><div class="icon">✍️</div><p>在大纲树中双击章节开始编辑</p></div><div id="editableContent" class="editor-textarea" contenteditable="true" style="display:none;"></div></div>
+
+<!-- Activity Bar -->
+<div id="activityBar">
+  <div class="act-item active" data-panel="outline" title="大纲 (Ctrl+1)" onclick="ACT.focus('outline')">📖</div>
+  <div class="act-item" data-panel="chat" title="对话 (Ctrl+2)" onclick="ACT.focus('chat')">💬</div>
+  <div class="act-sep"></div>
+  <div class="act-item" data-panel="skillConfig" title="Skill配置 (Ctrl+3)" onclick="ACT.focus('skillConfig')">🧠</div>
+  <div class="act-item" data-panel="apiConfig" title="API配置 (Ctrl+4)" onclick="ACT.focus('apiConfig')">⚙️</div>
+  <div class="act-bottom">
+    <a href="/projects.html?mode=writing" title="返回项目列表">←</a>
   </div>
 </div>
+
+<!-- Pane Container -->
+<div id="paneContainer"></div>
+
+<!-- Context Menu -->
+<div id="ctxMenu"></div>
+
+<!-- Zen Mode Exit -->
+<button id="zenExit" onclick="ZEN.exit()">✕ 退出全屏</button>
+
+<!-- Toast -->
+<div id="_toast" style="position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:999;padding:8px 20px;border-radius:8px;font-size:13px;font-family:inherit;pointer-events:none;opacity:0;transition:opacity 0.3s;"></div>
+
 <script>
-var token=localStorage.getItem('canvas_token');if(!token)window.location.replace('/login.html');
+// ===== Auth & API helpers =====
+var token=localStorage.getItem('canvas_token'); if(!token)window.location.replace('/login.html');
 var ep=new URLSearchParams(location.search).get('pid');
 var projectId=ep?Math.round(parseInt(ep)/1114514):null;
 if(!projectId)window.location.replace('/projects.html');
-console.log('[Write] pid='+projectId);
 var API='/api';
 function api(m,p,b){var o={method:m,headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}};if(b)o.body=JSON.stringify(b);return fetch(API+p,o).then(function(r){if(r.status===401){return r.json().then(function(d){var k=d&&d.error&&d.error.indexOf('已在其他设备登录')>=0;localStorage.removeItem('canvas_token');localStorage.removeItem('canvas_username');window.location.replace('/login.html'+(k?'?reason=kicked':''));return Promise.reject();}).catch(function(){localStorage.removeItem('canvas_token');localStorage.removeItem('canvas_username');window.location.replace('/login.html');return Promise.reject();});}var ct=r.headers.get('content-type')||'';if(ct.indexOf('json')>=0)return r.json();return r.text().then(function(t){try{return JSON.parse(t);}catch(e){return null;}});});}
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-function toast(m,t){var el=document.getElementById('_toast');if(!el){el=document.createElement('div');el.id='_toast';el.style.cssText='position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:999;padding:8px 20px;border-radius:8px;font-size:13px;font-family:inherit;pointer-events:none;opacity:0;transition:opacity 0.3s;';document.body.appendChild(el);}el.textContent=m;el.style.background=t==='error'?'rgba(245,63,63,0.9)':t==='warn'?'rgba(245,166,35,0.9)':'rgba(0,180,100,0.9)';el.style.color='#fff';el.style.opacity='1';if(el._t)clearTimeout(el._t);el._t=setTimeout(function(){el.style.opacity='0';},2500);}
-function showPrompt(msg,dv,cb){var ov=document.createElement('div');ov.className='prompt-overlay';ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:800;display:flex;align-items:center;justify-content:center;';ov.innerHTML='<div style=\"background:#171717;border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;padding:24px;width:380px;\"><div style=\"font-size:14px;margin-bottom:12px;color:#fff;\">'+escHtml(msg)+'</div><input id=\"_promptInp\" style=\"width:100%;padding:8px 12px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-size:13px;font-family:inherit;outline:none;\" value=\"'+escHtml(dv||'')+'\"><div style=\"display:flex;gap:8px;justify-content:flex-end;margin-top:12px;\"><button style=\"padding:8px 18px;border-radius:6px;border:0.5px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.06);color:#A1A1AA;cursor:pointer;font-family:inherit;\" onclick=\"this.closest(\'.prompt-overlay\').remove()\">取消</button><button style=\"padding:8px 18px;border-radius:6px;border:none;background:#05A3C5;color:#fff;cursor:pointer;font-family:inherit;\" onclick=\"var v=document.getElementById(\'_promptInp\').value;var o2=this.closest(\'.prompt-overlay\');o2.remove();(_pCb||function(){})(v)\">确定</button></div></div>';document.body.appendChild(ov);window._pCb=cb;ov.addEventListener('click',function(e){if(e.target===ov)ov.remove();});}
+function toast(m,t){var el=document.getElementById('_toast');el.textContent=m;el.style.background=t==='error'?'rgba(245,63,63,0.9)':t==='warn'?'rgba(245,166,35,0.9)':'rgba(0,180,100,0.9)';el.style.color='#fff';el.style.opacity='1';if(el._t)clearTimeout(el._t);el._t=setTimeout(function(){el.style.opacity='0';},2500);}
+function showPrompt(msg,dv,cb){var ov=document.createElement('div');ov.className='prompt-overlay';ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:800;display:flex;align-items:center;justify-content:center;';ov.innerHTML='<div style="background:#171717;border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;padding:24px;width:380px;"><div style="font-size:14px;margin-bottom:12px;color:#fff;">'+escHtml(msg)+'</div><input id="_promptInp" style="width:100%;padding:8px 12px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-size:13px;font-family:inherit;outline:none;" value="'+escHtml(dv||'')+'"><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;"><button style="padding:8px 18px;border-radius:6px;border:0.5px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.06);color:#A1A1AA;cursor:pointer;font-family:inherit;" onclick="this.closest(\'.prompt-overlay\').remove()">取消</button><button style="padding:8px 18px;border-radius:6px;border:none;background:#05A3C5;color:#fff;cursor:pointer;font-family:inherit;" onclick="var v=document.getElementById(\'_promptInp\').value;var o2=this.closest(\'.prompt-overlay\');o2.remove();(_pCb||function(){})(v)">确定</button></div></div>';document.body.appendChild(ov);window._pCb=cb;ov.addEventListener('click',function(e){if(e.target===ov)ov.remove();});}
 
-// ===== 标签管理 =====
-var panelMap = { outline:'panelOutline', chat:'panelChat', editor:'panelEditor' };
-function switchTab(tabId) {
-  document.querySelectorAll('.bar-tab').forEach(function(t) {
-    t.classList.toggle('active', t.getAttribute('data-tab') === tabId || (tabId === 'editor' && t.getAttribute('data-chapter') == activeChapterId));
-  });
-  document.querySelectorAll('.tab-panel').forEach(function(p) {
-    p.classList.toggle('active', p.id === panelMap[tabId]);
-  });
-}
-
-function switchChatSubTab(tab) {
-  document.getElementById('tabSubChat').classList.toggle('active', tab === 'chat');
-  document.getElementById('tabSubChars').classList.toggle('active', tab === 'chars');
-  document.getElementById('subPanelChat').style.display = tab === 'chat' ? '' : 'none';
-  document.getElementById('subPanelChars').style.display = tab === 'chars' ? '' : 'none';
-  document.getElementById('chatInputArea').style.display = tab === 'chat' ? '' : 'none';
-  if (tab === 'chars') loadCharacters();
-}
-
-function addChapterTab(chapterId, title) {
-  var existing = document.querySelector('.bar-tab[data-chapter="' + chapterId + '"]');
-  if (existing) { showEditorTab(chapterId); return; }
-  var tab = document.createElement('div');
-  tab.className = 'bar-tab';
-  tab.setAttribute('data-tab', 'editor');
-  tab.setAttribute('data-chapter', chapterId);
-  tab.innerHTML = '✍️ ' + escHtml(title) + ' <span class="tab-close" onclick="event.stopPropagation();closeChapterTab(' + chapterId + ')">✕</span>';
-  tab.onclick = function() { showEditorTab(chapterId); };
-  var spacer = document.querySelector('#tabBar .bar-spacer');
-  spacer.parentNode.insertBefore(tab, spacer);
-  showEditorTab(chapterId);
-}
-
-function closeChapterTab(chapterId) {
-  var tab = document.querySelector('.bar-tab[data-chapter="' + chapterId + '"]');
-  if (tab) tab.remove();
-  if (activeChapterId === chapterId) {
-    var nextTab = document.querySelector('.bar-tab[data-chapter]');
-    if (nextTab) { showEditorTab(parseInt(nextTab.getAttribute('data-chapter'))); }
-    else switchTab('outline');
+// ===== Keyboard shortcuts =====
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key==='1') { e.preventDefault(); ACT.focus('outline'); }
+    else if (e.key==='2') { e.preventDefault(); ACT.focus('chat'); }
+    else if (e.key==='3') { e.preventDefault(); ACT.focus('skillConfig'); }
+    else if (e.key==='4') { e.preventDefault(); ACT.focus('apiConfig'); }
   }
-}
-
-function showEditorTab(chapterId) {
-  var ch = chapters.find(function(c) { return c.id === chapterId; });
-  if (!ch) return;
-  activeChapterId = chapterId;
-  writingData.chapterId = chapterId;
-  document.getElementById('chapTitle').textContent = ch.title || ('第' + ch.chapter_no + '章');
-  switchTab('editor');
-  document.getElementById('editorPlaceholder').style.display = 'none';
-  var ed = document.getElementById('editableContent');
-  ed.style.display = 'block';
-  ed.innerHTML = ch.content_text || '';
-  document.getElementById('wordCount').textContent = '字数: ' + ((ch.content_text || '').replace(/\s/g, '').length);
-  renderOutlineTree();
-}
+  if (e.key==='Escape' && document.body.classList.contains('zen-mode')) { ZEN.exit(); }
+});
 </script>
+
 <script src="write.js"></script>
 </body>
 </html>

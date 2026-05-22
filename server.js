@@ -1521,6 +1521,115 @@ app.post('/api/writing-projects/:id/switch-branch', auth, (req, res) => {
     console.log('[Writing 分支] 切换到 '+branch_name);
     res.json({ ok:true, branch:branch_name });
 });
+
+// ==================== Skill 管理 ====================
+// GET 列出用户的优化技能
+app.get('/api/writing-projects/:id/skills', auth, (req, res) => {
+    try {
+        var skills = queryAll('SELECT * FROM optimized_skills WHERE user_id=? ORDER BY updated_at DESC', [req.userId]);
+        res.json(skills || []);
+    } catch(e) { console.error('[Skill] GET skills error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// POST 创建新技能
+app.post('/api/writing-projects/:id/skills', auth, (req, res) => {
+    try {
+        var { name_cn, name_en, description, content, json_schema } = req.body;
+        if (!name_cn || !content) return res.status(400).json({ error: 'name_cn和content必填' });
+        var id = dbRun('INSERT INTO optimized_skills (user_id, name_cn, name_en, description, content, json_schema, is_enabled) VALUES (?,?,?,?,?,?,0)',
+            [req.userId, name_cn, name_en||'', description||'', content, json_schema||'']);
+        console.log('[Skill] 创建技能 id='+id+' name='+name_cn);
+        res.json({ id: id, ok: true });
+    } catch(e) { console.error('[Skill] POST skill error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// PUT 更新技能
+app.put('/api/writing-projects/:id/skills/:sid', auth, (req, res) => {
+    try {
+        var sid = parseInt(req.params.sid);
+        var skill = queryOne('SELECT * FROM optimized_skills WHERE id=? AND user_id=?', [sid, req.userId]);
+        if (!skill) return res.status(404).json({ error: '技能不存在' });
+        var sets = [];
+        var params = [];
+        ['name_cn','name_en','description','content','json_schema'].forEach(function(k) {
+            if (req.body[k] !== undefined) { sets.push(k+'=?'); params.push(req.body[k]); }
+        });
+        if (req.body.is_enabled !== undefined) { sets.push('is_enabled=?'); params.push(req.body.is_enabled ? 1 : 0); }
+        if (sets.length) {
+            sets.push('updated_at=CURRENT_TIMESTAMP');
+            params.push(sid);
+            dbRun('UPDATE optimized_skills SET '+sets.join(',')+' WHERE id=?', params);
+            saveDB();
+            console.log('[Skill] 更新技能 id='+sid);
+        }
+        res.json({ ok: true });
+    } catch(e) { console.error('[Skill] PUT skill error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// DELETE 删除技能
+app.delete('/api/writing-projects/:id/skills/:sid', auth, (req, res) => {
+    try {
+        var sid = parseInt(req.params.sid);
+        dbRun('DELETE FROM optimized_skills WHERE id=? AND user_id=?', [sid, req.userId]);
+        saveDB();
+        console.log('[Skill] 删除技能 id='+sid);
+        res.json({ ok: true });
+    } catch(e) { console.error('[Skill] DELETE skill error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// POST 切换技能启用/禁用
+app.post('/api/writing-projects/:id/toggle-skill/:sid', auth, (req, res) => {
+    try {
+        var sid = parseInt(req.params.sid);
+        var skill = queryOne('SELECT * FROM optimized_skills WHERE id=? AND user_id=?', [sid, req.userId]);
+        if (!skill) return res.status(404).json({ error: '技能不存在' });
+        var newVal = skill.is_enabled ? 0 : 1;
+        dbRun('UPDATE optimized_skills SET is_enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [newVal, sid]);
+        saveDB();
+        console.log('[Skill] 切换技能 id='+sid+' enabled='+newVal);
+        res.json({ ok: true, is_enabled: !!newVal });
+    } catch(e) { console.error('[Skill] Toggle skill error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// ==================== Agent API 配置 ====================
+// GET 获取项目下所有agent配置
+app.get('/api/writing-projects/:id/agent-api-config', auth, (req, res) => {
+    try {
+        var configs = queryAll('SELECT * FROM writing_agent_config WHERE project_id=? ORDER BY agent_type', [req.params.id]);
+        res.json(configs || []);
+    } catch(e) { console.error('[AgentConfig] GET error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// PUT 更新单个agent配置
+app.put('/api/writing-projects/:id/agent-api-config', auth, (req, res) => {
+    try {
+        var { agent_type, api_endpoint, api_key, provider, model_name, temperature, max_tokens, system_prompt } = req.body;
+        if (!agent_type) return res.status(400).json({ error: 'agent_type必填' });
+        var projectId = parseInt(req.params.id);
+        var existing = queryOne('SELECT * FROM writing_agent_config WHERE project_id=? AND agent_type=?', [projectId, agent_type]);
+        if (existing) {
+            var sets = [];
+            var params = [];
+            if (api_endpoint !== undefined) { sets.push('api_endpoint=?'); params.push(api_endpoint); }
+            if (api_key !== undefined) { sets.push('api_key=?'); params.push(api_key); }
+            if (model_name !== undefined) { sets.push('model_name=?'); params.push(model_name); }
+            if (temperature !== undefined) { sets.push('temperature=?'); params.push(temperature); }
+            if (max_tokens !== undefined) { sets.push('max_tokens=?'); params.push(max_tokens); }
+            if (system_prompt !== undefined) { sets.push('system_prompt=?'); params.push(system_prompt); }
+            if (sets.length) {
+                sets.push('updated_at=CURRENT_TIMESTAMP');
+                params.push(projectId); params.push(agent_type);
+                dbRun('UPDATE writing_agent_config SET '+sets.join(',')+' WHERE project_id=? AND agent_type=?', params);
+                saveDB();
+            }
+        } else {
+            dbRun('INSERT INTO writing_agent_config (project_id, agent_type, api_endpoint, api_key, model_name, temperature, max_tokens, system_prompt) VALUES (?,?,?,?,?,?,?,?)',
+                [projectId, agent_type, api_endpoint||'', api_key||'', model_name||'', temperature||null, max_tokens||null, system_prompt||'']);
+        }
+        console.log('[AgentConfig] 保存 '+agent_type+' for project '+projectId);
+        res.json({ ok: true });
+    } catch(e) { console.error('[AgentConfig] PUT error:', e); res.status(500).json({ error: e.message }); }
+});
     db.run('CREATE TABLE IF NOT EXISTS writing_agent_config (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, agent_type TEXT NOT NULL, model_name TEXT, temperature REAL, api_endpoint TEXT, api_key TEXT, system_prompt TEXT, max_tokens INTEGER, is_muted INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE(project_id, agent_type))');
     db.run('CREATE TABLE IF NOT EXISTS agent_conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, agent_type TEXT NOT NULL, role TEXT NOT NULL, content TEXT DEFAULT \'\', thinking TEXT DEFAULT \'\', tool_calls TEXT DEFAULT \'\', metadata TEXT DEFAULT \'{"type":"chat"}\', token_used INTEGER DEFAULT 0, status TEXT DEFAULT \'done\', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
     db.run('CREATE TABLE IF NOT EXISTS token_usage_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, project_id INTEGER NOT NULL, agent_type TEXT, model TEXT, input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, cost_input REAL DEFAULT 0.0, cost_output REAL DEFAULT 0.0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
