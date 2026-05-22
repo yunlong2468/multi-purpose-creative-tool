@@ -1235,28 +1235,29 @@ function editUserMsg(msgIdx) {
   if (!bubble) return;
   var oldHTML = bubble.innerHTML;
   var oldText = msg.content || '';
+  // 锁定气泡宽度，防止内联编辑时尺寸变化
+  var bw = bubble.getBoundingClientRect().width;
+  bubble.style.width = bw + 'px';
+  bubble.style.boxSizing = 'border-box';
   // 替换为内联编辑区
-  bubble.innerHTML = '<textarea id="edInlineTa" style="width:100%;box-sizing:border-box;padding:0;background:transparent;border:none;color:inherit;font:inherit;font-size:13px;line-height:1.55;outline:none;resize:none;overflow:hidden;" rows="1">'+escHtml(oldText)+'</textarea>'
+  bubble.innerHTML = '<textarea id="edInlineTa" style="display:block;width:100%;box-sizing:border-box;padding:0;background:transparent;border:none;color:inherit;font:inherit;font-size:inherit;line-height:inherit;outline:none;resize:none;overflow:hidden;" rows="1">'+escHtml(oldText)+'</textarea>'
     +'<div style="display:flex;gap:6px;margin-top:4px;justify-content:flex-end;">'
     +'<button style="padding:2px 10px;border-radius:4px;border:0.5px solid var(--border);background:rgba(255,255,255,0.06);color:var(--text2);cursor:pointer;font-size:10px;font-family:inherit;" id="edInlineCancel">取消</button>'
     +'<button style="padding:2px 10px;border-radius:4px;border:none;background:rgba(255,255,255,0.4);color:#fff;cursor:pointer;font-size:10px;font-family:inherit;" id="edInlineConfirm">✓ 确认</button>'
     +'</div>';
-  // 自适应高度
-  var ta = document.getElementById('edInlineTa');
   var ta = document.getElementById('edInlineTa');
   function autoGrow() { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight+'px'; }
   autoGrow();
   ta.addEventListener('input', autoGrow);
   ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  function restoreBubble() { bubble.style.width = ''; bubble.style.boxSizing = ''; bubble.innerHTML = oldHTML; }
   // 取消
-  document.getElementById('edInlineCancel').addEventListener('click', function() {
-    bubble.innerHTML = oldHTML;
-  });
+  document.getElementById('edInlineCancel').addEventListener('click', restoreBubble);
   // 确认
   document.getElementById('edInlineConfirm').addEventListener('click', function() {
     var newText = ta.value.trim();
-    if (!newText || newText === oldText) { bubble.innerHTML = oldHTML; return; }
-    if (!confirm('编辑后将替换此消息并删除后续AI回复，确定继续？')) { bubble.innerHTML = oldHTML; return; }
+    if (!newText || newText === oldText) { restoreBubble(); return; }
+    if (!confirm('编辑后将替换此消息并删除后续AI回复，确定继续？')) { restoreBubble(); return; }
     agentMsgs[msgIdx].content = newText;
     agentMsgs[msgIdx].time = Date.now();
     var endIdx = agentMsgs.length;
@@ -1271,7 +1272,7 @@ function editUserMsg(msgIdx) {
   });
   // Esc 取消
   ta.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') { bubble.innerHTML = oldHTML; }
+    if (e.key === 'Escape') { restoreBubble(); }
   });
 }
 
