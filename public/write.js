@@ -809,13 +809,14 @@ var SKILL = {
     showSkillEditorFromCard(sid);
   },
   remove: function(sid) {
-    if (!confirm('确定删除此技能吗？')) return;
+    showConfirm('确定删除此技能吗？', function() {
     api('DELETE','/writing-projects/'+projectId+'/skills/'+sid).then(function(r) {
       if (r && r.error) { toast('删除失败: '+r.error, 'error'); return; }
       toast('技能已删除');
       SKILL.load();
-    }).catch(function(e) { console.error('[Skill] 删除失败:', e); toast('删除失败', 'error'); });
-  }
+    }).catch(function(e) { console.error("[Skill] 删除失败:", e); toast("删除失败", "error"); });
+  });
+  },
 };
 
 // ===== API Config =====
@@ -1257,18 +1258,19 @@ function editUserMsg(msgIdx) {
   document.getElementById('edInlineConfirm').addEventListener('click', function() {
     var newText = ta.value.trim();
     if (!newText || newText === oldText) { restoreBubble(); return; }
-    if (!confirm('编辑后将替换此消息并删除后续AI回复，确定继续？')) { restoreBubble(); return; }
-    agentMsgs[msgIdx].content = newText;
-    agentMsgs[msgIdx].time = Date.now();
-    var endIdx = agentMsgs.length;
-    for (var i = msgIdx + 1; i < agentMsgs.length; i++) {
-      if (agentMsgs[i].role === 'user') { endIdx = i; break; }
-    }
-    if (endIdx > msgIdx + 1) {
-      agentMsgs.splice(msgIdx + 1, endIdx - msgIdx - 1);
-    }
-    api('POST','/writing-projects/'+projectId+'/undo-last').catch(function(){});
-    renderAgentMessages();
+    showConfirm('编辑后将替换此消息并删除后续AI回复，确定继续？', function() {
+      agentMsgs[msgIdx].content = newText;
+      agentMsgs[msgIdx].time = Date.now();
+      var endIdx = agentMsgs.length;
+      for (var i = msgIdx + 1; i < agentMsgs.length; i++) {
+        if (agentMsgs[i].role === 'user') { endIdx = i; break; }
+      }
+      if (endIdx > msgIdx + 1) {
+        agentMsgs.splice(msgIdx + 1, endIdx - msgIdx - 1);
+      }
+      api('POST','/writing-projects/'+projectId+'/undo-last').catch(function(){});
+      renderAgentMessages();
+    });
   });
   // Esc 取消
   ta.addEventListener('keydown', function(e) {
