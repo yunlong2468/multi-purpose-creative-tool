@@ -372,7 +372,8 @@ function formatAgentContent(text) {
       parts.forEach(function(cell) {
         var tag = ri===0 ? 'th' : 'td';
         var style = ri===0 ? 'padding:4px 8px;border:0.5px solid var(--border);background:rgba(5,163,197,0.12);text-align:left;' : 'padding:4px 8px;border:0.5px solid var(--border);text-align:left;';
-        html += '<'+tag+' style="'+style+'">'+cell.trim()+'</'+tag+'>';
+        var cellText = cell.trim().replace(/\*\*\s*(.+?)\s*\*\*/g, '<b>$1</b>');
+        html += '<'+tag+' style="'+style+'">'+cellText+'</'+tag+'>';
       });
       html += '</tr>';
     });
