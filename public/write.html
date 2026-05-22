@@ -355,8 +355,8 @@ function formatAgentContent(text) {
   t = t.replace(/^##\s+(.+)$/gm, '<h3 style="margin:10px 0 6px;font-size:14px;">$1</h3>');
   // 5. 分割线 --- → <hr>
   t = t.replace(/^[-*]{3,}\s*$/gm, '<hr style="border:0.5px solid var(--border);margin:8px 0;">');
-  // 6. 加粗 **text**
-  t = t.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  // 6. 加粗 **text**（允许前后空格）
+  t = t.replace(/\*\*\s*(.+?)\s*\*\*/g, '<b>$1</b>');
   // 7. 段落 \n\n → </p><p>
   t = '<p>'+t.split(/\n\n+/).join('</p><p>')+'</p>';
   // 8. 表格还原（生成 HTML table）
