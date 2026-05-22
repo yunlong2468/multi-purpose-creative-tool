@@ -1188,7 +1188,7 @@ function lastUserMsgIdx() {
 var pendingUndoMsgIdx = -1;
 
 function showUserCtxMenu(e, msgIdx) {
-  e.preventDefault();
+  e.preventDefault(); e.stopPropagation();
   var menu = document.getElementById('userCtxMenu');
   menu.setAttribute('data-msg-idx', msgIdx);
   var isLatest = (msgIdx === lastUserMsgIdx());
@@ -1205,8 +1205,11 @@ function showUserCtxMenu(e, msgIdx) {
   }
   menu.innerHTML = h;
   menu.classList.add('show');
-  menu.style.left = e.clientX+'px';
-  menu.style.top = e.clientY+'px';
+  // 限制菜单不超出视口边缘，避免触发浏览器辅助滚动
+  var mx = Math.min(e.clientX, window.innerWidth - 140);
+  var my = Math.min(e.clientY, window.innerHeight - 120);
+  menu.style.left = mx+'px';
+  menu.style.top = my+'px';
   setTimeout(function(){ document.addEventListener('click', function h(){ menu.classList.remove('show'); document.removeEventListener('click',h); }); }, 0);
 }
 
