@@ -1242,7 +1242,7 @@ function editUserMsg(msgIdx) {
   bubble.style.boxSizing = 'border-box';
   // 替换为内联编辑区
   bubble.innerHTML = '<textarea id="edInlineTa" style="display:block;width:100%;box-sizing:border-box;padding:6px 8px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.12);border-radius:6px;color:inherit;font:inherit;font-size:inherit;line-height:inherit;outline:none;resize:none;overflow:hidden;" rows="1">'+escHtml(oldText)+'</textarea>'
-    +'<div style="display:flex;gap:6px;margin-top:6px;padding:6px 8px;justify-content:flex-end;background:rgba(0,0,0,0.8);border-radius:6px;">'
+    +'<div style="display:flex;gap:6px;margin-top:6px;padding:6px 8px;justify-content:flex-end;background:rgba(255,255,255,0.04);border-radius:6px;">'
     +'<button style="padding:2px 10px;border-radius:4px;border:0.5px solid var(--border);background:rgba(255,255,255,0.08);color:var(--text);cursor:pointer;font-size:10px;font-family:inherit;" id="edInlineCancel">取消</button>'
     +'<button style="padding:2px 10px;border-radius:4px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:10px;font-family:inherit;" id="edInlineConfirm">✓ 确认</button>'
     +'</div>';
