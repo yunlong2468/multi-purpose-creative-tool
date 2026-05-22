@@ -76,6 +76,7 @@ body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','
 @keyframes fadeIn { from{opacity:0;transform:translateY(4px);} to{opacity:1;transform:translateY(0);} }
 .msg .avatar { width:28px; height:28px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:14px; margin-top:2px; }
 .msg .bubble { padding:8px 12px; border-radius:10px; font-size:12px; line-height:1.55; word-break:break-word; max-width:calc(100% - 40px); overflow-wrap:break-word; }
+.msg .bubble b, .msg .bubble strong { font-weight:700; }
 .msg.system-msg { justify-content:center; }
 .msg.system-msg .sys-text { font-size:10px; color:var(--text2); background:rgba(255,255,255,0.03); padding:2px 8px; border-radius:10px; max-width:280px; text-align:center; }
 .msg.user-msg { flex-direction:row-reverse; }
