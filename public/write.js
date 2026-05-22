@@ -1109,7 +1109,7 @@ function renderSingleMsg(m) {
   if(m.type==='system')return'<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
   if(m.role==='user'){
     var idx = agentMsgs.indexOf(m);
-    return'<div class="msg user-msg" data-msg-idx="'+idx+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" onmousedown="if(event.button===2)event.preventDefault()" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+idx+')">'+escHtml(m.content)+t+'</div></div>';
+    return'<div class="msg user-msg" data-msg-idx="'+idx+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" onmousedown="if(event.button===2){event.preventDefault();event.stopPropagation()}" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+idx+')">'+escHtml(m.content)+t+'</div></div>';
   }
   var avatar=getAgentIcon(m.agent);
   var parsed = parseOptBtns(m.content, m.agent);
@@ -1159,7 +1159,7 @@ function renderAgentMessages() {
     var t = m.time ? '<div class="msg-time">'+fmtTime(m.time)+'</div>' : '';
     if(m.type==='system')html+='<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
     else if(m.role==='user'){
-      html+='<div class="msg user-msg" data-msg-idx="'+i+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" onmousedown="if(event.button===2)event.preventDefault()" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+i+')">'+escHtml(m.content)+t+'</div></div>';
+      html+='<div class="msg user-msg" data-msg-idx="'+i+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" onmousedown="if(event.button===2){event.preventDefault();event.stopPropagation()}" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+i+')">'+escHtml(m.content)+t+'</div></div>';
     }
     else {
       var avatar=getAgentIcon(m.agent);
