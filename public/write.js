@@ -1108,8 +1108,7 @@ function renderSingleMsg(m) {
   if(m.type==='system')return'<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
   if(m.role==='user'){
     var idx = agentMsgs.indexOf(m);
-    var ctx = (idx === lastUserMsgIdx()) ? ' oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+idx+')"' : '';
-    return'<div class="msg user-msg"'+ctx+'><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble">'+escHtml(m.content)+t+'</div></div>';
+    return'<div class="msg user-msg" data-msg-idx="'+idx+'" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+idx+')"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble">'+escHtml(m.content)+t+'</div></div>';
   }
   var avatar=getAgentIcon(m.agent);
   var parsed = parseOptBtns(m.content, m.agent);
@@ -1154,14 +1153,12 @@ function renderAgentMessages() {
   var container=document.getElementById('subPanelChat'); if(!container)return;
   var wasAtBottom=container.scrollHeight-container.scrollTop-container.clientHeight<60;
   if(!agentMsgs.length){container.innerHTML='<div class="ap-loading">暂无对话记录<br><span style="font-size:11px;color:var(--text2);">在下方输入消息开始创作</span></div>';unreadCount=0;updateUnreadBadge();return;}
-  var lastUserIdx = lastUserMsgIdx();
   var html='';
   agentMsgs.forEach(function(m, i) {
     var t = m.time ? '<div class="msg-time">'+fmtTime(m.time)+'</div>' : '';
     if(m.type==='system')html+='<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
     else if(m.role==='user'){
-      var ctx = (i === lastUserIdx) ? ' data-msg-idx="'+i+'" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+i+')"' : '';
-      html+='<div class="msg user-msg"'+ctx+'><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble">'+escHtml(m.content)+t+'</div></div>';
+      html+='<div class="msg user-msg" data-msg-idx="'+i+'" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+i+')"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble">'+escHtml(m.content)+t+'</div></div>';
     }
     else {
       var avatar=getAgentIcon(m.agent);
@@ -1194,15 +1191,62 @@ function showUserCtxMenu(e, msgIdx) {
   e.preventDefault();
   var menu = document.getElementById('userCtxMenu');
   menu.setAttribute('data-msg-idx', msgIdx);
-  if (agentBusy || pendingAgent) {
-    menu.innerHTML = '<div class="ctx-item" style="color:var(--text2);cursor:default;">⏳ 智能体思考中，请停止或等待回复完成</div>';
-  } else {
-    menu.innerHTML = '<div class="ctx-item" onclick="undoLastUserMsg()">↩ 撤回</div>';
+  var isLatest = (msgIdx === lastUserMsgIdx());
+  var busy = agentBusy || pendingAgent;
+  var h = '<div class="ctx-item" onclick="copyUserMsg('+msgIdx+')">📋 复制</div>';
+  h += '<div class="ctx-item" onclick="editUserMsg('+msgIdx+')">✏️ 编辑</div>';
+  if (isLatest) {
+    h += '<div class="ctx-sep"></div>';
+    if (busy) {
+      h += '<div class="ctx-item" style="color:var(--text2);cursor:default;">⏳ 思考中，无法撤回</div>';
+    } else {
+      h += '<div class="ctx-item danger" onclick="undoLastUserMsg()">↩ 撤回</div>';
+    }
   }
+  menu.innerHTML = h;
   menu.classList.add('show');
   menu.style.left = e.clientX+'px';
   menu.style.top = e.clientY+'px';
   setTimeout(function(){ document.addEventListener('click', function h(){ menu.classList.remove('show'); document.removeEventListener('click',h); }); }, 0);
+}
+
+function copyUserMsg(msgIdx) {
+  var menu = document.getElementById('userCtxMenu');
+  menu.classList.remove('show');
+  if (msgIdx < 0 || msgIdx >= agentMsgs.length) return;
+  var text = agentMsgs[msgIdx].content || '';
+  navigator.clipboard.writeText(text).then(function() {
+    toast('已复制');
+  }).catch(function() {
+    toast('复制失败', 'error');
+  });
+}
+
+function editUserMsg(msgIdx) {
+  var menu = document.getElementById('userCtxMenu');
+  menu.classList.remove('show');
+  if (msgIdx < 0 || msgIdx >= agentMsgs.length) return;
+  var oldText = agentMsgs[msgIdx].content || '';
+  showPrompt('编辑已发送的消息:', oldText, function(newText) {
+    if (!newText || !newText.trim()) return;
+    if (newText.trim() === oldText.trim()) return;
+    if (!confirm('编辑后将替换此消息并删除后续AI回复，确定继续？')) return;
+    // 更新消息内容
+    agentMsgs[msgIdx].content = newText.trim();
+    agentMsgs[msgIdx].time = Date.now();
+    // 删除后续消息（直到下一条用户消息为止）
+    var endIdx = agentMsgs.length;
+    for (var i = msgIdx + 1; i < agentMsgs.length; i++) {
+      if (agentMsgs[i].role === 'user') { endIdx = i; break; }
+    }
+    if (endIdx > msgIdx + 1) {
+      agentMsgs.splice(msgIdx + 1, endIdx - msgIdx - 1);
+    }
+    // 同步后端
+    api('POST','/writing-projects/'+projectId+'/undo-last').catch(function(){});
+    renderAgentMessages();
+    requestAnimationFrame(function(){ var c=document.getElementById('subPanelChat'); if(c)c.scrollTop=c.scrollHeight; });
+  });
 }
 
 function undoLastUserMsg() {

@@ -290,20 +290,22 @@ select:focus option:checked {
 .opt-btn.gone { opacity:0.3; pointer-events:none; border-color:var(--border); color:var(--text2); background:rgba(255,255,255,0.03); }
 .opt-btn.picked { opacity:1; background:var(--accent); color:#fff; pointer-events:none; }
 
-/* ===== 用户消息右键撤回 ===== */
-.msg.user-msg .bubble { position:relative; }
-.msg.user-msg[oncontextmenu] .bubble { cursor:context-menu; }
-.msg.user-msg[oncontextmenu] .bubble::after {
+/* ===== 用户消息右键菜单 ===== */
+.msg.user-msg .bubble { position:relative; cursor:context-menu; }
+.msg.user-msg .bubble::after {
   content:''; position:absolute; right:4px; bottom:2px; width:16px; height:16px;
   opacity:0; transition:opacity 0.15s; border-radius:3px;
 }
-.msg.user-msg[oncontextmenu] .bubble:hover::after { opacity:0.5; background:rgba(255,255,255,0.15); }
+.msg.user-msg .bubble:hover::after { opacity:0.5; background:rgba(255,255,255,0.15); }
 #userCtxMenu {
   position:fixed; display:none; background:var(--panel); border:0.5px solid var(--border);
   border-radius:8px; padding:4px; z-index:999; min-width:120px; box-shadow:0 8px 24px rgba(0,0,0,0.6);
 }
 #userCtxMenu.show { display:block; }
-#userCtxMenu .ctx-item:hover { background:rgba(245,63,63,0.15); color:var(--danger); }
+#userCtxMenu .ctx-item { padding:6px 12px; border-radius:4px; cursor:pointer; font-size:13px; color:var(--text2); white-space:nowrap; transition:background 0.08s; display:flex; align-items:center; gap:8px; }
+#userCtxMenu .ctx-item:hover { background:rgba(5,163,197,0.12); color:var(--text); }
+#userCtxMenu .ctx-item.danger:hover { background:rgba(245,63,63,0.15); color:var(--danger); }
+#userCtxMenu .ctx-sep { height:0.5px; background:var(--border); margin:2px 6px; }
 
 /* ===== 思考冒泡动画 ===== */
 .typing-dots { display:inline-flex; align-items:center; gap:3px; padding:2px 0; vertical-align:middle; }
