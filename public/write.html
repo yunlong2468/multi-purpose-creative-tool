@@ -385,6 +385,9 @@ document.addEventListener('keydown', function(e) {
   }
   if (e.key==='Escape' && document.body.classList.contains('zen-mode')) { ZEN.exit(); }
 });
+
+// 全局禁用浏览器原生右键菜单，仅保留自定义菜单
+document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
 </script>
 
 <script src="write.js"></script>

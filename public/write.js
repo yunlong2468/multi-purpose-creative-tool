@@ -1109,7 +1109,7 @@ function renderSingleMsg(m) {
   if(m.type==='system')return'<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
   if(m.role==='user'){
     var idx = agentMsgs.indexOf(m);
-    return'<div class="msg user-msg" data-msg-idx="'+idx+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" onmousedown="if(event.button===2){event.preventDefault();event.stopPropagation()}" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+idx+')">'+escHtml(m.content)+t+'</div></div>';
+    return'<div class="msg user-msg" data-msg-idx="'+idx+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+idx+')">'+escHtml(m.content)+t+'</div></div>';
   }
   var avatar=getAgentIcon(m.agent);
   var parsed = parseOptBtns(m.content, m.agent);
@@ -1159,7 +1159,7 @@ function renderAgentMessages() {
     var t = m.time ? '<div class="msg-time">'+fmtTime(m.time)+'</div>' : '';
     if(m.type==='system')html+='<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
     else if(m.role==='user'){
-      html+='<div class="msg user-msg" data-msg-idx="'+i+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" onmousedown="if(event.button===2){event.preventDefault();event.stopPropagation()}" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+i+')">'+escHtml(m.content)+t+'</div></div>';
+      html+='<div class="msg user-msg" data-msg-idx="'+i+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+i+')">'+escHtml(m.content)+t+'</div></div>';
     }
     else {
       var avatar=getAgentIcon(m.agent);
@@ -1190,14 +1190,10 @@ var pendingUndoMsgIdx = -1;
 
 var _ctxMenuScrollHide = null;
 function showUserCtxMenu(e, msgIdx) {
-  e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-  // 临时禁用文字选中避免浏览器在右键时触发滚动
-  var chat = document.getElementById('subPanelChat');
-  if (chat) chat.style.userSelect = 'none';
+  e.preventDefault(); e.stopPropagation();
   // 滚动聊天区时自动关闭菜单
   function hideMenu() {
     var m=document.getElementById('userCtxMenu'); m.classList.remove('show');
-    restoreUserSelect();
   }
   if (!_ctxMenuScrollHide) {
     _ctxMenuScrollHide = hideMenu;
@@ -1224,18 +1220,12 @@ function showUserCtxMenu(e, msgIdx) {
   var my = Math.min(e.clientY, window.innerHeight - 120);
   menu.style.left = mx+'px';
   menu.style.top = my+'px';
-  setTimeout(function(){ document.addEventListener('click', function h(){ menu.classList.remove('show'); restoreUserSelect(); document.removeEventListener('click',h); }); }, 0);
-}
-
-function restoreUserSelect() {
-  var chat = document.getElementById('subPanelChat');
-  if (chat) chat.style.userSelect = '';
+  setTimeout(function(){ document.addEventListener('click', function h(){ menu.classList.remove('show'); document.removeEventListener('click',h); }); }, 0);
 }
 
 function copyUserMsg(msgIdx) {
   var menu = document.getElementById('userCtxMenu');
   menu.classList.remove('show');
-  restoreUserSelect();
   if (msgIdx < 0 || msgIdx >= agentMsgs.length) return;
   var text = agentMsgs[msgIdx].content || '';
   navigator.clipboard.writeText(text).then(function() {
@@ -1248,7 +1238,6 @@ function copyUserMsg(msgIdx) {
 function editUserMsg(msgIdx) {
   var menu = document.getElementById('userCtxMenu');
   menu.classList.remove('show');
-  restoreUserSelect();
   if (msgIdx < 0 || msgIdx >= agentMsgs.length) return;
   var msg = agentMsgs[msgIdx];
   // 找到对应的气泡 DOM
@@ -1302,7 +1291,6 @@ function undoLastUserMsg() {
   var menu = document.getElementById('userCtxMenu');
   var msgIdx = parseInt(menu.getAttribute('data-msg-idx'));
   menu.classList.remove('show');
-  restoreUserSelect();
   if (isNaN(msgIdx) || msgIdx < 0 || msgIdx >= agentMsgs.length) { console.warn('[Undo] invalid msgIdx:', msgIdx); return; }
   if (agentMsgs[msgIdx].role !== 'user') { console.warn('[Undo] msgIdx not a user message'); return; }
   // 终止进行中的Agent调用，防止撤回后被SSE重新写入
