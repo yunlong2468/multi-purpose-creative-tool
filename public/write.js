@@ -1115,7 +1115,7 @@ function renderSingleMsg(m) {
   var parsed = parseOptBtns(m.content, m.agent);
   var contentHtml = parsed.html + parsed.btns;
   var h='<div class="msg agent-msg"><div class="avatar" style="font-size:17px;">'+avatar+'</div><div class="bubble">';
-  h+='<div style="font-size:11px;color:var(--accent);padding:4px;margin:-4px 0 -6px -4px;cursor:pointer;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
+  h+='<div style="font-size:11px;color:var(--accent);padding:4px;margin:-4px 0 -6px -4px;cursor:pointer;display:inline-block;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
   if(m.thinking){h+='<span class="think-toggle" onclick="var b=this.nextElementSibling;b.classList.toggle(\'show\');this.textContent=b.classList.contains(\'show\')?\'💭 收起思考\':\'💭 思考过程\'">💭 思考过程</span>';h+='<div class="think-body">'+formatAgentContent(m.thinking)+'</div>';}
   h+=contentHtml+t+'</div></div>';
   return h;
@@ -1166,7 +1166,7 @@ function renderAgentMessages() {
       var parsed = parseOptBtns(m.content, m.agent);
   var contentHtml = parsed.html + parsed.btns;
       html+='<div class="msg agent-msg"><div class="avatar" style="font-size:17px;">'+avatar+'</div><div class="bubble">';
-      html+='<div style="font-size:11px;color:var(--accent);padding:4px;margin:-4px 0 -6px -4px;cursor:pointer;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
+      html+='<div style="font-size:11px;color:var(--accent);padding:4px;margin:-4px 0 -6px -4px;cursor:pointer;display:inline-block;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
       if(m.thinking){html+='<span class="think-toggle" onclick="var b=this.nextElementSibling;b.classList.toggle(\'show\');this.textContent=b.classList.contains(\'show\')?\'💭 收起思考\':\'💭 思考过程\'">💭 思考过程</span>';html+='<div class="think-body">'+formatAgentContent(m.thinking)+'</div>';}
       html+=contentHtml+t+'</div></div>';
     }
