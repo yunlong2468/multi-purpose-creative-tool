@@ -505,21 +505,15 @@ var TABDRAG = {
     cleanupDragIndicators();
     var tabsEl = targetPane.el.querySelector('.pane-tabs');
     if (!tabsEl) return;
-    // 虚影矩形碰撞箱检测：与哪个标签重叠就往哪插入
+    // 虚影中心X判断落点：无论覆盖标签还是落在间隙都能正确确定插入位置
     var ghostRect = TABDRAG.ghost ? TABDRAG.ghost.getBoundingClientRect() : null;
     var tabEls = tabsEl.querySelectorAll('.pane-tab');
     var insertIdx = tabEls.length;
     if (ghostRect) {
+      var gx = ghostRect.left + ghostRect.width / 2;
       for (var i=0; i<tabEls.length; i++) {
         var tr = tabEls[i].getBoundingClientRect();
-        // AABB 重叠检测
-        if (ghostRect.left < tr.right && ghostRect.right > tr.left) {
-          // 虚影中心在标签左半边→插入标签前，右半边→插入标签后
-          insertIdx = (ghostRect.left + ghostRect.width/2 < tr.left + tr.width/2) ? i : i+1;
-          break;
-        }
-        // 虚影完全在标签左侧→插入此位置
-        if (ghostRect.right <= tr.left) { insertIdx = i; break; }
+        if (gx < tr.left + tr.width / 2) { insertIdx = i; break; }
       }
     }
     // 后续标签整体右移腾出空间（smooth gap）
