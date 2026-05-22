@@ -96,7 +96,6 @@ var PANE = {
     var p = this._getPane(paneId); if (!p) return;
     var tab = p.tabs.find(function(t){ return t.id===tabId; });
     if (!tab) { console.warn('[Pane] Tab not found:', tabId); return; }
-    console.log('[Pane] activateTab pane='+paneId+' tab='+tabId+' type='+tab.type+' activeTabId was='+p.activeTabId);
     p.activeTabId = tabId;
     this._renderPane(p);
     this._renderContent(p, tab);
@@ -234,8 +233,6 @@ var PANE = {
     var panelId = 'panel_'+p.id+'_'+tab.type;
     var panel = content.querySelector('#'+panelId);
     var isNew = !panel;
-    console.log('[Pane] _renderContent pane='+p.id+' tab='+tab.id+' type='+tab.type+' isNew='+isNew);
-    if (tab.type==='apiConfig') console.trace('[Pane] _renderContent apiConfig CALL STACK:');
     if (isNew) {
       panel = document.createElement('div');
       panel.id = panelId;
@@ -745,10 +742,8 @@ function showSkillEditor(s) {
 var SKILL = {
   load: function() {
     var body = document.getElementById('skBody');
-    console.log('[Skill] load called, skBody found:', !!body);
-    if (!body) { console.warn('[Skill] load: skBody element not in DOM'); return; }
+    if (!body) return;
     api('GET','/writing-projects/'+projectId+'/skills').then(function(skills) {
-      console.log('[Skill] load response, count:', (skills&&skills.length)||0);
       if (!skills||!skills.length) {
         body.innerHTML = '<div class="sk-empty">暂无技能<br><span style="font-size:10px;">使用技能优化Agent自动生成，或手动创建</span></div>';
         return;
@@ -775,9 +770,7 @@ var SKILL = {
   create: function() {
     showPrompt('新建技能名称:', '', function(name) {
       if (!name||!name.trim()) return;
-      console.log('[Skill] create: name='+name.trim());
       api('POST','/writing-projects/'+projectId+'/skills', { name_cn:name.trim(), content:'' }).then(function(r) {
-        console.log('[Skill] create response:', r);
         if (!r) { toast('创建失败: 服务器无响应', 'error'); return; }
         if (r.error) { toast('创建失败: '+r.error, 'error'); return; }
         toast('技能已创建');
