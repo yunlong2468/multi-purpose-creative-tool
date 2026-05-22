@@ -205,22 +205,38 @@ function formatAgentContent(text) {
   return t;
 }
 
-// ==================== 未读追踪（哨兵 + IntersectionObserver） ====================
+// ==================== 未读追踪（基于 lastReadMsgIndex） ====================
 var unreadCount = 0;
+var lastReadMsgIndex = -1;
 var unreadObserver = null;
+
+function isUserAtBottom() {
+  var c = document.getElementById('subPanelChat');
+  if (!c) return true;
+  return c.scrollHeight - c.scrollTop - c.clientHeight < 60;
+}
 
 function scrollToBottom() {
   var c = document.getElementById('subPanelChat');
-  if (c) { c.scrollTop = c.scrollHeight; unreadCount = 0; updateUnreadBadge(); }
+  if (c) { c.scrollTop = c.scrollHeight; markAllRead(); }
+}
+
+function markAllRead() {
+  lastReadMsgIndex = agentMsgs.length - 1;
+  unreadCount = 0;
+  updateUnreadBadge();
 }
 
 function scrollToBottomIfAtBottom() {
   var c = document.getElementById('subPanelChat');
   if (!c) return;
-  var atBottom = c.scrollHeight - c.scrollTop - c.clientHeight < 60;
-  if (atBottom) { c.scrollTop = c.scrollHeight; unreadCount = 0; }
-  else { unreadCount = countMessagesBelowViewport(); }
-  updateUnreadBadge();
+  if (isUserAtBottom()) {
+    c.scrollTop = c.scrollHeight;
+    markAllRead();
+  } else {
+    unreadCount = Math.max(0, agentMsgs.length - 1 - lastReadMsgIndex);
+    updateUnreadBadge();
+  }
 }
 
 function setupUnreadObserver() {
@@ -228,36 +244,23 @@ function setupUnreadObserver() {
   if (!container) return;
   if (unreadObserver) unreadObserver.disconnect();
   unreadObserver = new IntersectionObserver(function(entries) {
-    var sentinelVisible = entries[0] && entries[0].isIntersecting;
-    if (sentinelVisible) {
-      unreadCount = 0;
-    } else {
-      unreadCount = countMessagesBelowViewport();
-    }
-    updateUnreadBadge();
+    if (entries[0] && entries[0].isIntersecting) markAllRead();
   }, { root: container, threshold: 0.1 });
-  // 哨兵在 msg-inner 末尾，每次渲染后重新观察
   var sentinel = container.querySelector('.msg-sentinel');
   if (sentinel) unreadObserver.observe(sentinel);
 }
 
-function countMessagesBelowViewport() {
-  var container = document.getElementById('subPanelChat');
-  if (!container) return 0;
-  var cb = container.getBoundingClientRect().bottom;
-  var msgs = container.querySelectorAll('.msg:not(.msg-sentinel)');
-  var count = 0;
-  msgs.forEach(function(m) {
-    if (m.getBoundingClientRect().top >= cb - 2) count++;
-  });
-  return count;
-}
-
 function scrollToUnread() {
   var container = document.getElementById('subPanelChat');
-  container.scrollTop = container.scrollHeight;
-  unreadCount = 0;
-  updateUnreadBadge();
+  if (!container) return;
+  var targetIdx = Math.max(0, lastReadMsgIndex + 1);
+  var msgs = container.querySelectorAll('.msg:not(.msg-sentinel)');
+  if (msgs[targetIdx]) {
+    msgs[targetIdx].scrollIntoView({ block: 'start' });
+  } else {
+    container.scrollTop = container.scrollHeight;
+  }
+  markAllRead();
 }
 
 function updateUnreadBadge() {
@@ -268,25 +271,6 @@ function updateUnreadBadge() {
   } else {
     badge.classList.remove('show');
   }
-}
-
-// 滚动时更新未读计数
-var _unreadScrollTimer = 0;
-
-function countAndUpdateUnread() {
-  var container = document.getElementById('subPanelChat');
-  if (!container) return;
-  var sentinel = container.querySelector('.msg-sentinel');
-  if (!sentinel) return;
-  var cr = container.getBoundingClientRect();
-  var sr = sentinel.getBoundingClientRect();
-  // 哨兵底部在容器底部上方 → 可见（用户在底部）
-  if (sr.bottom <= cr.bottom + 4) {
-    unreadCount = 0;
-  } else {
-    unreadCount = countMessagesBelowViewport();
-  }
-  updateUnreadBadge();
 }
 
 // 追加单条消息到 DOM（不触发全量重绘，保留哨兵和滚动状态）
@@ -305,7 +289,7 @@ function renderSingleMsg(m) {
 }
 
 function appendMsgToDOM(html) {
-  var inner = document.querySelector('#agentMessages .msg-inner');
+  var inner = document.querySelector('#subPanelChat .msg-inner');
   if (!inner) return;
   var sentinel = inner.querySelector('.msg-sentinel');
   // 移除旧的思考中占位
@@ -319,7 +303,7 @@ function appendMsgToDOM(html) {
 }
 
 function renderPendingAgent() {
-  var inner = document.querySelector('#agentMessages .msg-inner');
+  var inner = document.querySelector('#subPanelChat .msg-inner');
   if (!inner) return;
   var old = inner.querySelector('.msg-thinking');
   if (old) old.remove();
@@ -367,11 +351,12 @@ function renderAgentMessages() {
   function scrollDown() {
     if (wasAtBottom || agentMsgs.length <= 2) {
       container.scrollTop = container.scrollHeight;
-      unreadCount = 0;
+      markAllRead();
     } else {
-      unreadCount = countMessagesBelowViewport();
+      lastReadMsgIndex = agentMsgs.length - 1;
+      unreadCount = 0;
+      updateUnreadBadge();
     }
-    updateUnreadBadge();
     setupUnreadObserver();
   }
   requestAnimationFrame(function() { requestAnimationFrame(scrollDown); });
@@ -408,7 +393,7 @@ function sendAgentMessage() {
   inp.value = '';
   setBusyUI(true);
   console.log('[Write] 用户发送: '+text.substring(0,100));
-  unreadCount = 0; updateUnreadBadge();
+  markAllRead();
   var userMsg = { type:'chat', role:'user', content:text };
   agentMsgs.push(userMsg);
   appendMsgToDOM(renderSingleMsg(userMsg));
@@ -472,7 +457,7 @@ api('GET','/writing-projects/'+projectId+'/conversations').then(function(msgs) {
     console.log('[Write] 该项目暂无历史对话');
   }
   renderAgentMessages();
-  requestAnimationFrame(function(){ requestAnimationFrame(function(){ var c=document.getElementById('subPanelChat'); if(c){c.scrollTop=c.scrollHeight;unreadCount=0;updateUnreadBadge();} }); });
+  requestAnimationFrame(function(){ requestAnimationFrame(function(){ var c=document.getElementById('subPanelChat'); if(c){c.scrollTop=c.scrollHeight;markAllRead();} }); });
 }).catch(function(err) {
   console.error('[Write] 加载历史对话失败:', err);
   renderAgentMessages();

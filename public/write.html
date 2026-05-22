@@ -122,7 +122,7 @@ body { background:var(--bg); color:var(--text); font-family:'Inter','Segoe UI','
         <span style="font-size:10px;color:var(--text2);" id="onlineAgents">1人</span>
       </div>
       <div id="subPanelChat" class="ap-messages"><div class="ap-loading">加载历史对话中...</div></div>
-      <div id="subPanelChars" class="ap-messages"><button onclick="generateCharacters()" id="btnGenChars" style="padding:6px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:11px;font-family:inherit;width:100%;margin:8px;">🎭 生成角色</button><div id="charList"></div></div>
+      <div id="subPanelChars" class="ap-messages" style="display:none;"><button onclick="generateCharacters()" id="btnGenChars" style="padding:6px;border-radius:6px;border:none;background:var(--accent);color:#fff;cursor:pointer;font-size:11px;font-family:inherit;width:100%;margin:8px;">🎭 生成角色</button><div id="charList"></div></div>
       <div class="ap-input" id="chatInputArea">
         <div class="unread-badge" id="unreadBadge" onclick="scrollToUnread()"></div>
         <div class="mention-dropdown" id="mentionDropdown"></div>
@@ -158,6 +158,65 @@ function api(m,p,b){var o={method:m,headers:{'Content-Type':'application/json','
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function toast(m,t){var el=document.getElementById('_toast');if(!el){el=document.createElement('div');el.id='_toast';el.style.cssText='position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:999;padding:8px 20px;border-radius:8px;font-size:13px;font-family:inherit;pointer-events:none;opacity:0;transition:opacity 0.3s;';document.body.appendChild(el);}el.textContent=m;el.style.background=t==='error'?'rgba(245,63,63,0.9)':t==='warn'?'rgba(245,166,35,0.9)':'rgba(0,180,100,0.9)';el.style.color='#fff';el.style.opacity='1';if(el._t)clearTimeout(el._t);el._t=setTimeout(function(){el.style.opacity='0';},2500);}
 function showPrompt(msg,dv,cb){var ov=document.createElement('div');ov.className='prompt-overlay';ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:800;display:flex;align-items:center;justify-content:center;';ov.innerHTML='<div style=\"background:#171717;border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;padding:24px;width:380px;\"><div style=\"font-size:14px;margin-bottom:12px;color:#fff;\">'+escHtml(msg)+'</div><input id=\"_promptInp\" style=\"width:100%;padding:8px 12px;background:rgba(255,255,255,0.04);border:0.5px solid rgba(255,255,255,0.1);border-radius:6px;color:#fff;font-size:13px;font-family:inherit;outline:none;\" value=\"'+escHtml(dv||'')+'\"><div style=\"display:flex;gap:8px;justify-content:flex-end;margin-top:12px;\"><button style=\"padding:8px 18px;border-radius:6px;border:0.5px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.06);color:#A1A1AA;cursor:pointer;font-family:inherit;\" onclick=\"this.closest(\'.prompt-overlay\').remove()\">取消</button><button style=\"padding:8px 18px;border-radius:6px;border:none;background:#05A3C5;color:#fff;cursor:pointer;font-family:inherit;\" onclick=\"var v=document.getElementById(\'_promptInp\').value;var o2=this.closest(\'.prompt-overlay\');o2.remove();(_pCb||function(){})(v)\">确定</button></div></div>';document.body.appendChild(ov);window._pCb=cb;ov.addEventListener('click',function(e){if(e.target===ov)ov.remove();});}
+
+// ===== 标签管理 =====
+var panelMap = { outline:'panelOutline', chat:'panelChat', editor:'panelEditor' };
+function switchTab(tabId) {
+  document.querySelectorAll('.bar-tab').forEach(function(t) {
+    t.classList.toggle('active', t.getAttribute('data-tab') === tabId || (tabId === 'editor' && t.getAttribute('data-chapter') == activeChapterId));
+  });
+  document.querySelectorAll('.tab-panel').forEach(function(p) {
+    p.classList.toggle('active', p.id === panelMap[tabId]);
+  });
+}
+
+function switchChatSubTab(tab) {
+  document.getElementById('tabSubChat').classList.toggle('active', tab === 'chat');
+  document.getElementById('tabSubChars').classList.toggle('active', tab === 'chars');
+  document.getElementById('subPanelChat').style.display = tab === 'chat' ? '' : 'none';
+  document.getElementById('subPanelChars').style.display = tab === 'chars' ? '' : 'none';
+  document.getElementById('chatInputArea').style.display = tab === 'chat' ? '' : 'none';
+  if (tab === 'chars') loadCharacters();
+}
+
+function addChapterTab(chapterId, title) {
+  var existing = document.querySelector('.bar-tab[data-chapter="' + chapterId + '"]');
+  if (existing) { showEditorTab(chapterId); return; }
+  var tab = document.createElement('div');
+  tab.className = 'bar-tab';
+  tab.setAttribute('data-tab', 'editor');
+  tab.setAttribute('data-chapter', chapterId);
+  tab.innerHTML = '✍️ ' + escHtml(title) + ' <span class="tab-close" onclick="event.stopPropagation();closeChapterTab(' + chapterId + ')">✕</span>';
+  tab.onclick = function() { showEditorTab(chapterId); };
+  var spacer = document.querySelector('#tabBar .bar-spacer');
+  spacer.parentNode.insertBefore(tab, spacer);
+  showEditorTab(chapterId);
+}
+
+function closeChapterTab(chapterId) {
+  var tab = document.querySelector('.bar-tab[data-chapter="' + chapterId + '"]');
+  if (tab) tab.remove();
+  if (activeChapterId === chapterId) {
+    var nextTab = document.querySelector('.bar-tab[data-chapter]');
+    if (nextTab) { showEditorTab(parseInt(nextTab.getAttribute('data-chapter'))); }
+    else switchTab('outline');
+  }
+}
+
+function showEditorTab(chapterId) {
+  var ch = chapters.find(function(c) { return c.id === chapterId; });
+  if (!ch) return;
+  activeChapterId = chapterId;
+  writingData.chapterId = chapterId;
+  document.getElementById('chapTitle').textContent = ch.title || ('第' + ch.chapter_no + '章');
+  switchTab('editor');
+  document.getElementById('editorPlaceholder').style.display = 'none';
+  var ed = document.getElementById('editableContent');
+  ed.style.display = 'block';
+  ed.innerHTML = ch.content_text || '';
+  document.getElementById('wordCount').textContent = '字数: ' + ((ch.content_text || '').replace(/\s/g, '').length);
+  renderOutlineTree();
+}
 </script>
 <script src="write.js"></script>
 </body>
