@@ -780,7 +780,8 @@ function generateOutline() {
   if (agentBusy) { console.log('[Write] Agent忙碌中，拒绝生成大纲'); return; }
   console.log('[Write] 触发大纲生成');
   agentBusy = true;
-  var sysMsg = { type:'system', content:'📋 大纲Agent 已启动，正在分析对话记录生成大纲...' };
+  var oname = getAgentName('orchestrator'), uname = getAgentName('outliner');
+  var sysMsg = { type:'system', content:oname+' 邀请 '+uname+' 进入群聊' };
   agentMsgs.push(sysMsg); appendMsgToDOM(renderSingleMsg(sysMsg));
   pendingAgent = { agent:'outliner', label:getAgentName('outliner'), icon:getAgentIcon('outliner') }; renderPendingAgent();
   api('POST','/writing-projects/'+projectId+'/generate-outline').then(function(r) {
@@ -809,8 +810,10 @@ function generateOutline() {
         });
         var omsg = { type:'chat', role:'assistant', agent:'outliner', content:r.content.substring(0, 500)+(r.content.length>500?'\n...(已截断，完整内容已保存)':''), thinking:'' };
         agentMsgs.push(omsg); appendMsgToDOM(renderSingleMsg(omsg));
-        var okmsg = { type:'system', content:'✅ 大纲已生成，'+outlineJson['卷'].length+'卷大纲已自动创建，请查看左侧大纲树' };
+        var okmsg = { type:'system', content:'✅ 大纲已生成，'+outlineJson['卷'].length+'卷大纲已自动创建' };
+        var leavemsg = { type:'system', content:uname+' 退出群聊' };
         agentMsgs.push(okmsg); appendMsgToDOM(renderSingleMsg(okmsg));
+        agentMsgs.push(leavemsg); appendMsgToDOM(renderSingleMsg(leavemsg));
         console.log('[Write] 大纲生成成功 volumes='+outlineJson['卷'].length);
         setTimeout(function(){ loadOutline(); }, 1000);
       } else {
@@ -820,7 +823,9 @@ function generateOutline() {
       }
     } else {
       var emsg = { type:'system', content:'⚠️ 大纲生成失败: '+(r&&r.error||'未知错误') };
+      var leavemsg2 = { type:'system', content:uname+' 退出群聊' };
       agentMsgs.push(emsg); appendMsgToDOM(renderSingleMsg(emsg));
+      agentMsgs.push(leavemsg2); appendMsgToDOM(renderSingleMsg(leavemsg2));
       console.error('[Write] 大纲生成失败:',r);
     }
     renderAgentMessages();
@@ -874,7 +879,8 @@ function generateCharacters() {
   if (agentBusy) return;
   console.log('[Write] 触发角色生成');
   agentBusy = true;
-  var cmsg = { type:'system', content:'👥 角色Agent 已启动，正在分析小说设计角色...' };
+  var oname2 = getAgentName('orchestrator'), cname = getAgentName('character');
+  var cmsg = { type:'system', content:oname2+' 邀请 '+cname+' 进入群聊' };
   agentMsgs.push(cmsg); appendMsgToDOM(renderSingleMsg(cmsg));
   pendingAgent = { agent:'character', label:getAgentName('character'), icon:getAgentIcon('character') }; renderPendingAgent();
   api('POST','/writing-projects/'+projectId+'/generate-characters').then(function(r) {
@@ -887,8 +893,10 @@ function generateCharacters() {
         charJson['角色'].forEach(function(c) {
           api('POST','/writing-projects/'+projectId+'/characters', { name:c['姓名']||c['姓名']||'未命名', profile_json:JSON.stringify(c) });
         });
-        var cok = { type:'system', content:'✅ 已生成 '+charJson['角色'].length+' 个角色，请查看角色面板' };
+        var cok = { type:'system', content:'✅ 已生成 '+charJson['角色'].length+' 个角色' };
+        var cleave = { type:'system', content:cname+' 退出群聊' };
         agentMsgs.push(cok); appendMsgToDOM(renderSingleMsg(cok));
+        agentMsgs.push(cleave); appendMsgToDOM(renderSingleMsg(cleave));
         console.log('[Write] 角色生成成功 count='+charJson['角色'].length);
       } else {
         var cms = { type:'chat', role:'assistant', agent:'character', content:r.content, thinking:'' };
