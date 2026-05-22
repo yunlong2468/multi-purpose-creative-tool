@@ -357,17 +357,43 @@ function formatAgentContent(text) {
   return t;
 }
 
+// ==================== 未读追踪（哨兵 + IntersectionObserver） ====================
 var unreadCount = 0;
-var lastSeenMsgIndex = -1;
+var unreadObserver = null;
 
-function isAtBottom(el) {
-  return el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+function setupUnreadObserver() {
+  var container = document.getElementById('agentMessages');
+  if (!container) return;
+  if (unreadObserver) unreadObserver.disconnect();
+  unreadObserver = new IntersectionObserver(function(entries) {
+    var sentinelVisible = entries[0] && entries[0].isIntersecting;
+    if (sentinelVisible) {
+      unreadCount = 0;
+    } else {
+      unreadCount = countMessagesBelowViewport();
+    }
+    updateUnreadBadge();
+  }, { root: container, threshold: 0.1 });
+  // 哨兵在 msg-inner 末尾，每次渲染后重新观察
+  var sentinel = container.querySelector('.msg-sentinel');
+  if (sentinel) unreadObserver.observe(sentinel);
+}
+
+function countMessagesBelowViewport() {
+  var container = document.getElementById('agentMessages');
+  if (!container) return 0;
+  var cb = container.getBoundingClientRect().bottom;
+  var msgs = container.querySelectorAll('.msg:not(.msg-sentinel)');
+  var count = 0;
+  msgs.forEach(function(m) {
+    if (m.getBoundingClientRect().top >= cb - 2) count++;
+  });
+  return count;
 }
 
 function scrollToUnread() {
   var container = document.getElementById('agentMessages');
   container.scrollTop = container.scrollHeight;
-  lastSeenMsgIndex = agentMsgs.length - 1;
   unreadCount = 0;
   updateUnreadBadge();
 }
@@ -375,46 +401,39 @@ function scrollToUnread() {
 function updateUnreadBadge() {
   var badge = document.getElementById('unreadBadge');
   if (unreadCount > 0) {
-    badge.textContent = unreadCount+' 条新消息';
+    badge.textContent = unreadCount + ' 条新消息';
     badge.classList.add('show');
   } else {
     badge.classList.remove('show');
   }
 }
 
-function updateUnreadFromScroll() {
+// 滚动时更新未读计数
+var _unreadScrollTimer = 0;
+
+function countAndUpdateUnread() {
   var container = document.getElementById('agentMessages');
-  if (!container || !agentMsgs.length) return;
-  if (isAtBottom(container)) {
-    lastSeenMsgIndex = agentMsgs.length - 1;
+  if (!container) return;
+  var sentinel = container.querySelector('.msg-sentinel');
+  if (!sentinel) return;
+  var cr = container.getBoundingClientRect();
+  var sr = sentinel.getBoundingClientRect();
+  // 哨兵底部在容器底部上方 → 可见（用户在底部）
+  if (sr.bottom <= cr.bottom + 4) {
     unreadCount = 0;
-    updateUnreadBadge();
-    return;
+  } else {
+    unreadCount = countMessagesBelowViewport();
   }
-  // 倒数第几项消息可见，计算还有多少未读
-  var msgs = container.querySelectorAll('.msg');
-  var lastVisible = -1;
-  var containerTop = container.getBoundingClientRect().top;
-  var containerBottom = container.getBoundingClientRect().bottom;
-  msgs.forEach(function(msg, i) {
-    var r = msg.getBoundingClientRect();
-    if (r.bottom > containerTop && r.top < containerBottom) lastVisible = i;
-  });
-  if (lastVisible >= 0 && lastVisible >= lastSeenMsgIndex) {
-    lastSeenMsgIndex = lastVisible;
-    var remaining = agentMsgs.length - 1 - lastSeenMsgIndex;
-    unreadCount = Math.max(0, remaining);
-    updateUnreadBadge();
-  }
+  updateUnreadBadge();
 }
 
 function renderAgentMessages() {
   var container = document.getElementById('agentMessages');
   if (!container) return;
-  var wasAtBottom = isAtBottom(container);
+  var wasAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
   if (!agentMsgs.length) {
     container.innerHTML = '<div class="ap-loading">暂无对话记录<br><span style="font-size:10px;color:var(--text2);">在下方输入消息开始创作</span></div>';
-    lastSeenMsgIndex = -1; unreadCount = 0; updateUnreadBadge();
+    unreadCount = 0; updateUnreadBadge();
     return;
   }
   var html = '';
@@ -438,16 +457,18 @@ function renderAgentMessages() {
     var pa = pendingAgent;
     html += '<div class="msg agent-msg"><div class="avatar" style="font-size:16px;background:rgba(5,163,197,0.15);">'+pa.icon+'</div><div class="bubble"><div style="font-size:10px;color:var(--accent);margin-bottom:2px;">'+escHtml(pa.label||pa.agent)+'</div>⏳ 思考中...</div></div>';
   }
+  // 哨兵：1px 透明元素，IntersectionObserver 监听其在视口内/外
+  html += '<div class="msg msg-sentinel" style="height:1px;flex-shrink:0;opacity:0;pointer-events:none;"></div>';
   container.innerHTML = '<div class="msg-inner">'+html+'</div>';
   function scrollDown() {
     if (wasAtBottom || agentMsgs.length <= 2) {
       container.scrollTop = container.scrollHeight;
-      lastSeenMsgIndex = agentMsgs.length - 1;
       unreadCount = 0;
     } else {
-      unreadCount = agentMsgs.length - 1 - Math.max(0, lastSeenMsgIndex);
+      unreadCount = countMessagesBelowViewport();
     }
     updateUnreadBadge();
+    setupUnreadObserver();
   }
   requestAnimationFrame(function() { requestAnimationFrame(scrollDown); });
 }
@@ -463,7 +484,7 @@ function sendAgentMessage() {
   inp.disabled = true;
   agentBusy = true;
   console.log('[Write] 用户发送: '+text.substring(0,100));
-  lastSeenMsgIndex = agentMsgs.length; unreadCount = 0;
+  unreadCount = 0; updateUnreadBadge();
   agentMsgs.push({ type:'chat', role:'user', content:text });
   renderAgentMessages();
   // 调用LLM
@@ -799,8 +820,11 @@ window.addEventListener('mouseup', function() {
 initSidebarSizes();
 
 // 滚动监听：跟踪阅读进度
-var _msgContainer = document.getElementById('agentMessages');
-if (_msgContainer) _msgContainer.addEventListener('scroll', updateUnreadFromScroll);
+var _mc = document.getElementById('agentMessages');
+if (_mc) _mc.addEventListener('scroll', function() {
+  clearTimeout(_unreadScrollTimer);
+  _unreadScrollTimer = setTimeout(countAndUpdateUnread, 150);
+});
 
 // ==================== SSE-1: 互踢检测
 (function() {
