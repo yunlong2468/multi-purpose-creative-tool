@@ -144,8 +144,8 @@ body.zen-mode #zenExit { display:block; }
 .ch-msgs::-webkit-scrollbar { width:4px; }
 .ch-msgs::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
 .ch-input { padding:8px 12px; border-top:0.5px solid var(--border); display:flex; gap:6px; flex-shrink:0; position:relative; }
-.ch-input input { flex:1; padding:7px 10px; background:rgba(255,255,255,0.04); border:0.5px solid var(--border); border-radius:16px; color:var(--text); font-size:12px; font-family:inherit; outline:none; }
-.ch-input input:focus { border-color:var(--accent); }
+.ch-input textarea { flex:1; padding:7px 10px; background:rgba(255,255,255,0.04); border:0.5px solid var(--border); border-radius:10px; color:var(--text); font-size:12px; font-family:inherit; outline:none; resize:none; overflow-y:auto; max-height:120px; line-height:1.5; }
+.ch-input textarea:focus { border-color:var(--accent); }
 .ch-input button { padding:4px 12px; border-radius:14px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:12px; font-family:inherit; }
 .unread-badge {
   position:absolute; bottom:calc(100% + 4px); right:12px; background:var(--accent);

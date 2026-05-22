@@ -595,7 +595,7 @@ var RENDER = {
       + '<div class="ch-input" id="chatInputArea">'
       + '<div class="unread-badge" id="unreadBadge" onclick="scrollToUnread()"></div>'
       + '<div class="mention-dropdown" id="mentionDropdown"></div>'
-      + '<input type="text" id="agentInput" placeholder="输入消息或 @Agent..." onkeydown="handleInputKey(event)" oninput="handleMentionInput()">'
+      + '<textarea id="agentInput" rows="1" placeholder="输入消息或 @Agent..." onkeydown="handleInputKey(event)" oninput="handleMentionInput();autoGrowInput()"></textarea>'
       + '<button id="btnSend" onclick="sendAgentMessage()">发送</button>'
       + '<button id="btnStop" onclick="stopAgentCall()" style="display:none;background:rgba(245,63,63,0.15)!important;color:#F53F3F!important;border:0.5px solid rgba(245,63,63,0.3)!important;">⏹ 停止</button>'
       + '</div>'
@@ -936,6 +936,12 @@ function selectMention(agentId, atIdx) {
   document.getElementById('mentionDropdown').classList.remove('show');
   inp.focus(); inp.selectionStart=inp.selectionEnd=atIdx+name.length+2;
 }
+function autoGrowInput() {
+  var ta = document.getElementById('agentInput'); if (!ta) return;
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+}
+
 function handleInputKey(e) {
   var dropdown = document.getElementById('mentionDropdown');
   if (dropdown&&dropdown.classList.contains('show')) {
@@ -948,7 +954,7 @@ function handleInputKey(e) {
       items.forEach(function(it,i){ it.style.background=i===idx?'rgba(5,163,197,0.12)':''; it.style.color=i===idx?'var(--text)':''; });
       return;
     }
-    if (e.key==='Enter'||e.key==='Tab') {
+    if ((e.key==='Enter'&&!e.shiftKey)||e.key==='Tab') {
       e.preventDefault();
       var sel = dropdown.querySelector('.m-item[style]');
       if (sel) { sel.click(); return; }
@@ -958,7 +964,7 @@ function handleInputKey(e) {
     }
     if (e.key==='Escape') { dropdown.classList.remove('show'); return; }
   }
-  if (e.key==='Enter') sendAgentMessage();
+  if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); sendAgentMessage(); }
 }
 
 // ===== Markdown formatting =====
