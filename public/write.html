@@ -285,12 +285,13 @@ select:focus option:checked {
 .opt-btn.picked { opacity:1; background:var(--accent); color:#fff; pointer-events:none; }
 
 /* ===== 用户消息右键撤回 ===== */
-.msg.user-msg .bubble { position:relative; cursor:context-menu; }
-.msg.user-msg .bubble::after {
+.msg.user-msg .bubble { position:relative; }
+.msg.user-msg[oncontextmenu] .bubble { cursor:context-menu; }
+.msg.user-msg[oncontextmenu] .bubble::after {
   content:''; position:absolute; right:4px; bottom:2px; width:16px; height:16px;
   opacity:0; transition:opacity 0.15s; border-radius:3px;
 }
-.msg.user-msg .bubble:hover::after { opacity:0.5; background:rgba(255,255,255,0.15); }
+.msg.user-msg[oncontextmenu] .bubble:hover::after { opacity:0.5; background:rgba(255,255,255,0.15); }
 #userCtxMenu {
   position:fixed; display:none; background:var(--panel); border:0.5px solid var(--border);
   border-radius:8px; padding:4px; z-index:999; min-width:120px; box-shadow:0 8px 24px rgba(0,0,0,0.6);

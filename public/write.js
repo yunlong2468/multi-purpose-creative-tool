@@ -1073,7 +1073,11 @@ function clickOption(btn) {
 function renderSingleMsg(m) {
   var t = m.time ? '<div class="msg-time">'+fmtTime(m.time)+'</div>' : '';
   if(m.type==='system')return'<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
-  if(m.role==='user')return'<div class="msg user-msg" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+agentMsgs.indexOf(m)+')"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble">'+escHtml(m.content)+t+'</div></div>';
+  if(m.role==='user'){
+    var idx = agentMsgs.indexOf(m);
+    var ctx = (idx === lastUserMsgIdx()) ? ' oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+idx+')"' : '';
+    return'<div class="msg user-msg"'+ctx+'><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble">'+escHtml(m.content)+t+'</div></div>';
+  }
   var avatar=getAgentIcon(m.agent);
   var contentHtml = parseOptBtns(formatAgentContent(m.content), m.agent);
   var h='<div class="msg agent-msg"><div class="avatar" style="font-size:16px;">'+avatar+'</div><div class="bubble">';
@@ -1116,11 +1120,15 @@ function renderAgentMessages() {
   var container=document.getElementById('subPanelChat'); if(!container)return;
   var wasAtBottom=container.scrollHeight-container.scrollTop-container.clientHeight<60;
   if(!agentMsgs.length){container.innerHTML='<div class="ap-loading">暂无对话记录<br><span style="font-size:10px;color:var(--text2);">在下方输入消息开始创作</span></div>';unreadCount=0;updateUnreadBadge();return;}
+  var lastUserIdx = lastUserMsgIdx();
   var html='';
   agentMsgs.forEach(function(m, i) {
     var t = m.time ? '<div class="msg-time">'+fmtTime(m.time)+'</div>' : '';
     if(m.type==='system')html+='<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
-    else if(m.role==='user')html+='<div class="msg user-msg" data-msg-idx="'+i+'" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+i+')"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble">'+escHtml(m.content)+t+'</div></div>';
+    else if(m.role==='user'){
+      var ctx = (i === lastUserIdx) ? ' data-msg-idx="'+i+'" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+i+')"' : '';
+      html+='<div class="msg user-msg"'+ctx+'><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble">'+escHtml(m.content)+t+'</div></div>';
+    }
     else {
       var avatar=getAgentIcon(m.agent);
       var contentHtml = parseOptBtns(formatAgentContent(m.content), m.agent);
@@ -1138,6 +1146,13 @@ function renderAgentMessages() {
 }
 
 // ===== 撤回用户消息 =====
+function lastUserMsgIdx() {
+  for (var i = agentMsgs.length - 1; i >= 0; i--) {
+    if (agentMsgs[i].role === 'user') return i;
+  }
+  return -1;
+}
+
 var pendingUndoMsgIdx = -1;
 
 function showUserCtxMenu(e, msgIdx) {
