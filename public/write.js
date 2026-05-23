@@ -1827,7 +1827,8 @@ function pollStreamBuffer() {
       }
       return;
     }
-    if (agentBusy && !_bufActive) { _bufPollTimer = setTimeout(pollStreamBuffer, 800); return; }
+    if (!_bufActive) return; // 用户已发新消息，放弃飞行中的轮询结果
+    if (agentBusy) { _bufPollTimer = setTimeout(pollStreamBuffer, 800); return; }
     _bufStartedAt = buf.startedAt || Date.now();
     if (!_bufActive) {
       _bufActive = true;
