@@ -1644,9 +1644,15 @@ function sendAgentMessage() {
   for (var i = agentMsgs.length-1; i >= 0; i--) {
     if (agentMsgs[i].type === 'undo_notice') { agentMsgs[i].used = true; }
   }
-  // 同步更新 DOM 中已有的撤回提示
+  // 同步更新 DOM 中已有的撤回提示：移除链接并把文字末尾逗号去掉
   var notices = document.querySelectorAll('.undo-notice-link');
-  for (var j = 0; j < notices.length; j++) { notices[j].remove(); }
+  for (var j = 0; j < notices.length; j++) {
+    var parentSpan = notices[j].parentElement;
+    notices[j].remove();
+    if (parentSpan && parentSpan.classList.contains('sys-text')) {
+      parentSpan.textContent = '你撤回了一条消息';
+    }
+  }
   console.log('[Write] 用户发送: '+text.substring(0,100));
   markAllRead();
   var now = Date.now();
