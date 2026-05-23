@@ -1919,7 +1919,7 @@ function pollStreamBuffer() {
       }
       return;
     }
-    console.log("[Poll] 收到缓冲 c="+(buf.content?buf.content.length:0)+" t="+(buf.thinking?buf.thinking.length:0)+" active="+_bufActive+" busy="+agentBusy); if (agentBusy) { _bufPollTimer = setTimeout(pollStreamBuffer, 800); return; }
+    console.log("[Poll] 收到缓冲 c="+(buf.content?buf.content.length:0)+" t="+(buf.thinking?buf.thinking.length:0)+" active="+_bufActive+" busy="+agentBusy); if (agentBusy && !_bufActive) { _bufPollTimer = setTimeout(pollStreamBuffer, 800); return; }
     _bufStartedAt = buf.startedAt || Date.now();
     if (!_bufActive) {
       _bufActive = true;
