@@ -367,12 +367,14 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                 return;
             }
 
+            console.log('[Write LLM] DeepSeek响应状态='+llmResp.status+' contentType='+(llmResp.headers.get('content-type')||'?'));
             var reader = llmResp.body.getReader();
             var decoder = new TextDecoder();
             var buf = '';
             var fullContent = '';
             var fullThinking = '';
             var tokIn = 0, tokOut = 0;
+            var chunkCount = 0;
 
             // 心跳保活（10秒间隔，防止代理超时断连）
             var heartbeat = setInterval(function() {
@@ -381,24 +383,32 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
 
             while (true) {
                 var chunk = await reader.read();
+                chunkCount++;
                 // 前端断开（用户点击停止）
                 if (req.aborted || req.destroyed) {
                     clearInterval(heartbeat);
                     reader.cancel();
-                    console.log('[Write LLM] 前端断开，停止流式');
+                    console.log('[Write LLM] 前端断开，停止流式（已读'+chunkCount+'个chunk）');
                     return;
                 }
-                if (chunk.done) break;
+                if (chunk.done) { console.log('[Write LLM] DeepSeek流结束 chunkCount='+chunkCount+' buf剩余='+buf.length); break; }
 
-                buf += decoder.decode(chunk.value, { stream:true });
+                var rawBytes = chunk.value;
+                console.log('[Write LLM] 收到chunk #'+chunkCount+' 字节数='+(rawBytes?rawBytes.length:0));
+                buf += decoder.decode(rawBytes, { stream:true });
                 var lines = buf.split('\n');
                 buf = lines.pop() || '';
 
                 for (var li = 0; li < lines.length; li++) {
                     var line = lines[li].trim();
-                    if (!line || line.indexOf('data: ') !== 0) continue;
+                    if (!line || line.indexOf('data: ') !== 0) {
+                        if (line && line.indexOf('data:') === 0 && line.indexOf('data: ') !== 0) {
+                            console.log('[Write LLM] 异常SSE行(缺少空格): '+line.substring(0,100));
+                        }
+                        continue;
+                    }
                     var data = line.slice(6);
-                    if (data === '[DONE]') continue;
+                    if (data === '[DONE]') { console.log('[Write LLM] 收到[DONE]'); continue; }
                     try {
                         var parsed = JSON.parse(data);
                         var delta = parsed.choices && parsed.choices[0] && parsed.choices[0].delta;
@@ -407,14 +417,20 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                             res.write('data: '+JSON.stringify({type:'thinking',delta:delta.reasoning_content})+'\n\n');
                         }
                         if (delta && delta.content) {
+                            if (!fullContent) console.log('[Write LLM] 首个content chunk');
                             fullContent += delta.content;
                             res.write('data: '+JSON.stringify({type:'content',delta:delta.content})+'\n\n');
+                        }
+                        if (delta && !delta.reasoning_content && !delta.content && !delta.role) {
+                            // 空delta或有其他未知字段
+                            var keys = Object.keys(delta);
+                            if (keys.length) console.log('[Write LLM] 未知delta字段: '+JSON.stringify(keys));
                         }
                         if (parsed.usage) {
                             tokIn = parsed.usage.prompt_tokens || 0;
                             tokOut = parsed.usage.completion_tokens || 0;
                         }
-                    } catch(e) {}
+                    } catch(e) { console.log('[Write LLM] JSON解析失败: '+e.message+' 原始: '+data.substring(0,80)); }
                 }
             }
 
