@@ -1353,7 +1353,7 @@ function undoLastUserMsg() {
 
 // ===== Agent 调用 =====
 var agentBusy=false, pendingAgent=null, activeAbortController=null;
-var streamMsgEl=null, streamThinkTimer=null, streamThinkSecs=0, streamFirstContent=false;
+var streamMsgEl=null, streamThinkTimer=null, streamThinkSecs=0, streamFirstContent=false, streamConnTimeout=null;
 
 function setBusyUI(busy) {
   agentBusy=busy;
@@ -1377,6 +1377,7 @@ function stopAgentCall() {
 // ===== 流式消息渲染 =====
 function cleanupStreamingState() {
   if (streamThinkTimer) { clearInterval(streamThinkTimer); streamThinkTimer = null; }
+  if (streamConnTimeout) { clearTimeout(streamConnTimeout); streamConnTimeout = null; }
   streamMsgEl = null; streamThinkSecs = 0; streamFirstContent = false;
 }
 
@@ -1395,7 +1396,7 @@ function createStreamingBubble(agentType) {
     + '<div class="bubble">'
     + '<div style="font-size:11px;color:var(--accent);padding:4px;margin:-4px 0 -6px -4px;cursor:pointer;display:inline-block;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(agentType)+'\')">'+escHtml(name)+'</div>'
     + '<span class="think-toggle stream-think-toggle" style="cursor:default;">'
-    + '💭 思考中... <span class="stream-timer">0s</span> '
+    + '💭 思考中... <span class="stream-timer">等待中...</span> '
     + '<span class="typing-dots"><b></b><b></b><b></b></span>'
     + '</span>'
     + '<div class="think-body show stream-think-body" style="max-height:200px;overflow-y:auto;text-align:left;"></div>'
@@ -1409,6 +1410,7 @@ function createStreamingBubble(agentType) {
 }
 
 function startThinkingTimer() {
+  if (streamConnTimeout) { clearTimeout(streamConnTimeout); streamConnTimeout = null; }
   streamThinkSecs = 0;
   updateThinkingTimerDisplay();
   streamThinkTimer = setInterval(function() {
@@ -1500,6 +1502,22 @@ function finalizeStreamingMsg(data) {
 async function doStreamingCall(text) {
   var ac = new AbortController(); activeAbortController = ac;
 
+  // 60秒连接超时：如果一直收不到任何事件则报错
+  streamConnTimeout = setTimeout(function() {
+    if (!streamFirstContent && streamThinkSecs === 0 && !streamThinkTimer) {
+      console.warn('[Write] 流式连接超时（60s未收到事件）');
+      if (activeAbortController) activeAbortController.abort();
+      cleanupStreamingState();
+      var oldStream = document.querySelector('.msg-streaming');
+      if (oldStream) oldStream.remove();
+      var to = { type: 'system', content: '⚠️ 连接超时：60秒未收到AI响应，请检查网络或API配置后重试', time: Date.now() };
+      agentMsgs.push(to);
+      appendMsgToDOM(renderSingleMsg(to));
+      setBusyUI(false);
+      scrollToBottomIfAtBottom();
+    }
+  }, 60000);
+
   try {
     var resp = await fetch(API+'/writing-projects/'+projectId+'/llm-call', {
       method: 'POST',
@@ -1511,6 +1529,12 @@ async function doStreamingCall(text) {
     if (!resp.ok) {
       var errText = await resp.text();
       throw new Error('HTTP '+resp.status+': '+errText.substring(0, 200));
+    }
+
+    // 检测响应类型：非 text/event-stream 说明后端未启用流式模式
+    var contentType = resp.headers.get('Content-Type') || '';
+    if (contentType.indexOf('text/event-stream') === -1) {
+      throw new Error('服务器未启用流式模式（Content-Type: '+contentType+'），请确认后端已更新并重启');
     }
 
     var reader = resp.body.getReader();
@@ -1532,14 +1556,18 @@ async function doStreamingCall(text) {
         var raw = line.slice(6);
         try {
           var evt = JSON.parse(raw);
-          if (evt.type === 'thinking') {
+          if (evt.type === 'connected') {
+            // 连接成功，暂不操作
+          } else if (evt.type === 'thinking') {
             if (!hasStartedThinking) { hasStartedThinking = true; startThinkingTimer(); }
             appendThinkingDelta(evt.delta);
           } else if (evt.type === 'content') {
             appendContentDelta(evt.delta);
           } else if (evt.type === 'done') {
+            if (streamConnTimeout) { clearTimeout(streamConnTimeout); streamConnTimeout = null; }
             finalizeStreamingMsg(evt);
           } else if (evt.type === 'error') {
+            if (streamConnTimeout) { clearTimeout(streamConnTimeout); streamConnTimeout = null; }
             var errMsg = { type: 'system', content: '⚠️ '+evt.message, time: Date.now() };
             agentMsgs.push(errMsg);
             appendMsgToDOM(renderSingleMsg(errMsg));
@@ -1549,6 +1577,7 @@ async function doStreamingCall(text) {
       }
     }
   } catch(err) {
+    if (streamConnTimeout) { clearTimeout(streamConnTimeout); streamConnTimeout = null; }
     if (err && err.name === 'AbortError') {
       console.log('[Write] 流式调用已终止');
       cleanupStreamingState();
@@ -1562,6 +1591,7 @@ async function doStreamingCall(text) {
     agentMsgs.push(em);
     appendMsgToDOM(renderSingleMsg(em));
   } finally {
+    if (streamConnTimeout) { clearTimeout(streamConnTimeout); streamConnTimeout = null; }
     pendingAgent = null;
     activeAbortController = null;
     setBusyUI(false);
