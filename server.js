@@ -21,10 +21,7 @@ if (!fs.existsSync(BUFFER_DIR)) fs.mkdirSync(BUFFER_DIR, { recursive: true });
 
 // 流式输出磁盘缓冲（断线续传用）
 function streamBufferPath(projectId) { return path.join(BUFFER_DIR, 'stream_'+projectId+'.json'); }
-var _bufWriteCount = {};
 function saveStreamBuffer(projectId, content, thinking, startedAt) {
-    _bufWriteCount[projectId] = (_bufWriteCount[projectId] || 0) + 1;
-    if (_bufWriteCount[projectId] % 20 === 1) console.log('[Buffer] 写入 #'+_bufWriteCount[projectId]+' projectId='+projectId+' contentLen='+(content?content.length:0)+' thinkingLen='+(thinking?thinking.length:0));
     try { fs.writeFileSync(streamBufferPath(projectId), JSON.stringify({content:content, thinking:thinking, startedAt:startedAt, updatedAt:Date.now()})); } catch(e) {}
 }
 function clearStreamBuffer(projectId) {

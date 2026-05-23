@@ -1798,18 +1798,12 @@ var saveTimer=null, writingData={title:'',content:''};
 function autoSave(){if(saveTimer)clearTimeout(saveTimer);saveTimer=setTimeout(function(){var ed=document.getElementById('editableContent');writingData.content=ed?ed.innerHTML:'';if(writingData.chapterId){var wc=(ed.textContent||'').replace(/\s/g,'').length;api('PUT','/writing-projects/'+projectId+'/chapters/'+writingData.chapterId,{content_text:writingData.content,word_count:wc}).then(function(){console.log('[Write] 章节自动保存 id='+writingData.chapterId+' 字数='+wc);}).catch(function(e){console.error('[Write] 章节保存失败:',e);});}api('PUT','/writing-projects/'+projectId,writingData).then(function(){console.log('[Write] 项目自动保存完成');}).catch(function(e){console.error('[Write] 项目保存失败:',e);});},1000);}
 
 // ===== 断线续传：轮询磁盘缓冲 =====
-var _bufPollTimer = null, _bufLastContent = '', _bufActive = false, _bufStartedAt = 0;
+var _bufPollTimer = null, _bufActive = false, _bufStartedAt = 0;
 
-var _pollCount = 0;
 function pollStreamBuffer() {
-  _pollCount++;
-  var pollId = _pollCount;
-  console.log('[PollBuf] #'+pollId+' 开始请求');
   api('GET', '/writing-projects/'+projectId+'/stream-buffer?_t='+Date.now()).then(function(buf) {
-    console.log('[PollBuf] #'+pollId+' 收到响应 contentLen='+(buf?buf.content?buf.content.length:'empty':'null')+' thinkingLen='+(buf&&buf.thinking?buf.thinking.length:0));
     if (!buf || (!buf.content && !buf.thinking)) {
       if (_bufActive) {
-        console.log('[PollBuf] 缓冲已空，流结束');
         _bufActive = false;
         setBusyUI(false);
         stopBufferPolling();
@@ -1832,7 +1826,6 @@ function pollStreamBuffer() {
     }
     if (agentBusy && !_bufActive) { _bufPollTimer = setTimeout(pollStreamBuffer, 800); return; }
     _bufStartedAt = buf.startedAt || Date.now();
-    var initBubble = !_bufActive;
     if (!_bufActive) {
       _bufActive = true;
       setBusyUI(true);
@@ -1840,29 +1833,25 @@ function pollStreamBuffer() {
       streamAccumContent = '';
       createStreamingBubble('orchestrator');
     }
-    // 更新思考内容
+    // 更新思考内容 + 基于服务端时间戳的计时器
     if (buf.thinking) {
       if (!streamThinkTimer) {
-        console.log('[PollBuf] 启动计时器 startedAt='+_bufStartedAt+' elapsed='+Math.floor((Date.now()-_bufStartedAt)/1000)+'s');
         streamThinkSecs = Math.floor((Date.now() - _bufStartedAt) / 1000);
         updateThinkingTimerDisplay();
-        var calcSecs = Math.floor((Date.now() - _bufStartedAt) / 1000);
         streamThinkTimer = setInterval(function() {
           var newSecs = Math.floor((Date.now() - _bufStartedAt) / 1000);
           if (newSecs !== streamThinkSecs) { streamThinkSecs = newSecs; updateThinkingTimerDisplay(); }
         }, 1000);
       }
       if (buf.thinking !== streamAccumThinking) {
-        console.log('[PollBuf] 更新思考 len='+buf.thinking.length+' streamMsgEl='+!!streamMsgEl);
         streamAccumThinking = buf.thinking;
         var body = streamMsgEl ? streamMsgEl.querySelector('.stream-think-body') : null;
         if (body) body.innerHTML = escHtml(buf.thinking);
       }
     }
-    // 更新正文内容（增量追加）
+    // 更新正文内容（增量追加，避免每轮全量重渲染）
     if (buf.content && buf.content.length > streamAccumContent.length) {
       if (!streamFirstContent) {
-        console.log('[PollBuf] 首个正文chunk');
         streamFirstContent = true;
         finalizeThinkingTimer();
         var cel = streamMsgEl ? streamMsgEl.querySelector('.stream-content') : null;
@@ -1870,22 +1859,18 @@ function pollStreamBuffer() {
       }
       var delta = buf.content.substring(streamAccumContent.length);
       streamAccumContent = buf.content;
-      console.log('[PollBuf] 追加正文 delta='+delta.length+' total='+buf.content.length);
       var cel = streamMsgEl ? streamMsgEl.querySelector('.stream-content') : null;
       if (cel) cel.innerHTML += escHtml(delta).replace(/\n/g, '<br>');
-      else console.log('[PollBuf] WARN: .stream-content 不存在! streamMsgEl='+!!streamMsgEl);
       scrollToBottom();
     }
-    console.log('[PollBuf] #'+pollId+' 设定下次轮询 500ms');
     _bufPollTimer = setTimeout(pollStreamBuffer, 500);
-  }).catch(function(e) {
-    console.error('[PollBuf] #'+pollId+' 请求失败:', e);
+  }).catch(function() {
     _bufPollTimer = setTimeout(pollStreamBuffer, 1000);
   });
 }
 
 function stopBufferPolling() {
-  if (_bufPollTimer) { console.log('[PollBuf] 停止轮询'); clearTimeout(_bufPollTimer); _bufPollTimer = null; }
+  if (_bufPollTimer) { clearTimeout(_bufPollTimer); _bufPollTimer = null; }
 }
 
 // ==================== SSE ====================
