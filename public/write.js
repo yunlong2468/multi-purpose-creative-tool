@@ -1106,6 +1106,10 @@ function clickOption(btn) {
 
 function renderSingleMsg(m) {
   var t = m.time ? '<div class="msg-time">'+fmtTime(m.time)+'</div>' : '';
+  if(m.type==='undo_notice'){
+    window._undoneText = m.content || '';
+    return'<div class="msg system-msg"><span class="sys-text">你撤回了一条消息，<a style="color:var(--accent);text-decoration:underline;cursor:pointer;" onclick="event.stopPropagation();retriggerUndoneText()">重新编辑</a></span></div>';
+  }
   if(m.type==='system')return'<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
   if(m.role==='user'){
     var idx = agentMsgs.indexOf(m);
@@ -1157,7 +1161,11 @@ function renderAgentMessages() {
   var html='';
   agentMsgs.forEach(function(m, i) {
     var t = m.time ? '<div class="msg-time">'+fmtTime(m.time)+'</div>' : '';
-    if(m.type==='system')html+='<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
+    if(m.type==='undo_notice'){
+      window._undoneText = m.content || '';
+      html+='<div class="msg system-msg"><span class="sys-text">你撤回了一条消息，<a style="color:var(--accent);text-decoration:underline;cursor:pointer;" onclick="event.stopPropagation();retriggerUndoneText()">重新编辑</a></span></div>';
+    }
+    else if(m.type==='system')html+='<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
     else if(m.role==='user'){
       html+='<div class="msg user-msg" data-msg-idx="'+i+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" onmousedown="if(event.button===2){event.preventDefault();event.stopPropagation()}" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+i+')">'+escHtml(m.content)+t+'</div></div>';
     }
@@ -1312,6 +1320,8 @@ function undoLastUserMsg() {
   if (activeAbortController) { activeAbortController.abort(); activeAbortController = null; }
   agentBusy = false; pendingAgent = null;
   setBusyUI(false);
+  // 保存撤回的文本用于重新编辑
+  var undoneText = agentMsgs[msgIdx].content || '';
   // 找到下一条用户消息的索引（或数组末尾）
   var endIdx = agentMsgs.length;
   for (var i = msgIdx + 1; i < agentMsgs.length; i++) {
@@ -1319,6 +1329,8 @@ function undoLastUserMsg() {
   }
   var removed = agentMsgs.splice(msgIdx, endIdx - msgIdx);
   console.log('[Undo] 前端撤回 msgIdx='+msgIdx+' count='+removed.length);
+  // 插入撤回提示
+  agentMsgs.splice(msgIdx, 0, { type:'undo_notice', content:undoneText, time:Date.now() });
   // 同步后端
   api('POST','/writing-projects/'+projectId+'/undo-last').then(function(r) {
     console.log('[Undo] 后端撤回:', r);
@@ -1344,6 +1356,13 @@ function stopAgentCall() {
   var stopMsg={type:'system',content:'⏹ 已终止',time:Date.now()};
   agentMsgs.push(stopMsg);appendMsgToDOM(renderSingleMsg(stopMsg));
   setBusyUI(false);
+}
+
+function retriggerUndoneText() {
+  var text = window._undoneText;
+  if (!text) return;
+  var inp = document.getElementById('agentInput');
+  if (inp) { inp.value = text; sendAgentMessage(); }
 }
 
 function retriggerAgent(text) {
