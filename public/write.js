@@ -1372,7 +1372,7 @@ function retriggerUndoneText() {
   var text = window._undoneText;
   if (!text) return;
   var inp = document.getElementById('agentInput');
-  if (inp) { inp.value = text; sendAgentMessage(); }
+  if (inp) { inp.value = text; inp.focus(); autoGrowInput(); }
 }
 
 function retriggerAgent(text) {
