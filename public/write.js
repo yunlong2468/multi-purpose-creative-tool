@@ -1849,17 +1849,18 @@ function pollStreamBuffer() {
         if (body) body.innerHTML = escHtml(buf.thinking);
       }
     }
-    // 更新正文内容
-    if (buf.content && buf.content !== streamAccumContent) {
+    // 更新正文内容（增量追加，避免每轮全量重渲染）
+    if (buf.content && buf.content.length > streamAccumContent.length) {
       if (!streamFirstContent) {
         streamFirstContent = true;
         finalizeThinkingTimer();
         var cel = streamMsgEl ? streamMsgEl.querySelector('.stream-content') : null;
-        if (cel) cel.style.display = '';
+        if (cel) { cel.style.display = ''; cel.innerHTML = ''; }
       }
+      var delta = buf.content.substring(streamAccumContent.length);
       streamAccumContent = buf.content;
       var cel = streamMsgEl ? streamMsgEl.querySelector('.stream-content') : null;
-      if (cel) cel.innerHTML = formatAgentContent(buf.content);
+      if (cel) cel.innerHTML += escHtml(delta).replace(/\n/g, '<br>');
       scrollToBottom();
     }
     _bufPollTimer = setTimeout(pollStreamBuffer, 500);
