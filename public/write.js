@@ -1846,9 +1846,10 @@ function pollStreamBuffer() {
         console.log('[PollBuf] 启动计时器 startedAt='+_bufStartedAt+' elapsed='+Math.floor((Date.now()-_bufStartedAt)/1000)+'s');
         streamThinkSecs = Math.floor((Date.now() - _bufStartedAt) / 1000);
         updateThinkingTimerDisplay();
+        var calcSecs = Math.floor((Date.now() - _bufStartedAt) / 1000);
         streamThinkTimer = setInterval(function() {
-          streamThinkSecs = Math.floor((Date.now() - _bufStartedAt) / 1000);
-          updateThinkingTimerDisplay();
+          var newSecs = Math.floor((Date.now() - _bufStartedAt) / 1000);
+          if (newSecs !== streamThinkSecs) { streamThinkSecs = newSecs; updateThinkingTimerDisplay(); }
         }, 1000);
       }
       if (buf.thinking !== streamAccumThinking) {
