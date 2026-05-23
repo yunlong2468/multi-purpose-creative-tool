@@ -454,13 +454,16 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     // 获取子智能体的默认名（对应前端agentDefaults的type key）
                     var subAgentType = toolName==='generate_outline'?'outliner':toolName==='generate_characters'?'character':toolName;
                     console.log('[Write LLM] 执行工具: '+toolName);
-                    // 缓冲：{agent:xxx}占位符由前端替换为用户昵称
-                    saveStreamBuffer(projectId, '', '{agent:orchestrator}调用{agent:'+subAgentType+'}智能体\n正在生成中...', streamStartedAt);
+                    // 缓冲 + 入库系统消息（刷新后可恢复）
+                    var inviteMsg = '{agent:orchestrator}调用{agent:'+subAgentType+'}智能体';
+                    saveStreamBuffer(projectId, '', inviteMsg+'\n正在生成中...', streamStartedAt);
+                    dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, metadata) VALUES (?,?,?,?,?)', [projectId, subAgentType, 'assistant', inviteMsg, '{"type":"system"}']);
                     res.write('data: '+JSON.stringify({type:'tool_start',tool:toolName})+'\n\n');
                     var toolResult = await executeToolAsync(toolName, toolArgs, projectId, req.userId);
                     console.log('[Write LLM] 工具完成: '+toolName+' '+toolResult.summary);
                     var resultContent = toolResult.result ? (toolResult.result||'').substring(0, 500) : toolResult.summary;
                     saveStreamBuffer(projectId, resultContent, '✅ '+toolResult.summary, streamStartedAt);
+                    dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, metadata) VALUES (?,?,?,?,?)', [projectId, subAgentType, 'assistant', '✅ '+toolResult.summary, '{"type":"system"}']);
                     res.write('data: '+JSON.stringify({type:'tool_end',tool:toolName,summary:toolResult.summary,content:toolResult.result||''})+'\n\n');
                     toolMessages.push({ role:'tool', tool_call_id:tc.id, content:JSON.stringify(toolResult) });
                 }

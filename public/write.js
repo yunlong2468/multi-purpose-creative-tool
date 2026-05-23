@@ -1147,7 +1147,7 @@ function renderSingleMsg(m) {
     if (m.used) return'<div class="msg system-msg"><span class="sys-text">你撤回了一条消息</span></div>';
     return'<div class="msg system-msg"><span class="sys-text">你撤回了一条消息，<a class="undo-notice-link" style="color:var(--accent);text-decoration:underline;cursor:pointer;" onclick="event.stopPropagation();retriggerUndoneText()">重新编辑</a></span></div>';
   }
-  if(m.type==='system')return'<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
+  if(m.type==='system')return'<div class="msg system-msg"><span class="sys-text">'+escHtml(replaceAgentPlaceholders(m.content))+'</span></div>';
   if(m.role==='user'){
     var idx = agentMsgs.indexOf(m);
     return'<div class="msg user-msg" data-msg-idx="'+idx+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" onmousedown="if(event.button===2){event.preventDefault();event.stopPropagation()}" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+idx+')">'+escHtml(m.content)+t+'</div></div>';
@@ -1204,7 +1204,7 @@ function renderAgentMessages() {
       if (m.used) { html+='<div class="msg system-msg"><span class="sys-text">你撤回了一条消息</span></div>'; }
       else { html+='<div class="msg system-msg"><span class="sys-text">你撤回了一条消息，<a class="undo-notice-link" style="color:var(--accent);text-decoration:underline;cursor:pointer;" onclick="event.stopPropagation();retriggerUndoneText()">重新编辑</a></span></div>'; }
     }
-    else if(m.type==='system')html+='<div class="msg system-msg"><span class="sys-text">'+escHtml(m.content)+'</span></div>';
+    else if(m.type==='system')html+='<div class="msg system-msg"><span class="sys-text">'+escHtml(replaceAgentPlaceholders(m.content))+'</span></div>';
     else if(m.role==='user'){
       html+='<div class="msg user-msg" data-msg-idx="'+i+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" onmousedown="if(event.button===2){event.preventDefault();event.stopPropagation()}" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+i+')">'+escHtml(m.content)+t+'</div></div>';
     }
