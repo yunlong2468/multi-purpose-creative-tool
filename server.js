@@ -380,23 +380,23 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                 try { res.write('data: {"type":"waiting"}\n\n'); } catch(e) { clearInterval(heartbeat); }
             }, 10000);
 
+            var clientGone = false;
             console.log('[Write LLM] 进入读循环 req.aborted='+req.aborted+' req.destroyed='+req.destroyed);
             while (true) {
                 var readStart = Date.now();
                 var chunk = await reader.read();
                 console.log('[Write LLM] reader.read耗时='+(Date.now()-readStart)+'ms done='+chunk.done+' valueLen='+(chunk.value?chunk.value.length:'null'));
                 chunkCount++;
-                // 前端断开（用户点击停止）
-                if (req.aborted) {
+                // 用户点击停止 → 前端发送abort信号 → 终止流式
+                if (req.aborted && !clientGone) {
+                    clientGone = true;
                     clearInterval(heartbeat);
-                    reader.cancel();
-                    console.log('[Write LLM] 前端断开，停止流式（已读'+chunkCount+'个chunk）');
-                    return;
+                    console.log('[Write LLM] 前端断开，后台继续完成（已读'+chunkCount+'个chunk）');
                 }
                 if (chunk.done) { console.log('[Write LLM] DeepSeek流结束 chunkCount='+chunkCount+' buf剩余='+buf.length); break; }
 
                 var rawBytes = chunk.value;
-                console.log('[Write LLM] 收到chunk #'+chunkCount+' 字节数='+(rawBytes?rawBytes.length:0));
+                if (!clientGone) console.log('[Write LLM] 收到chunk #'+chunkCount+' 字节数='+(rawBytes?rawBytes.length:0));
                 buf += decoder.decode(rawBytes, { stream:true });
                 var lines = buf.split('\n');
                 buf = lines.pop() || '';
@@ -405,40 +405,39 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     var line = lines[li].trim();
                     if (!line || line.indexOf('data: ') !== 0) {
                         if (line && line.indexOf('data:') === 0 && line.indexOf('data: ') !== 0) {
-                            console.log('[Write LLM] 异常SSE行(缺少空格): '+line.substring(0,100));
+                            if (!clientGone) console.log('[Write LLM] 异常SSE行(缺少空格): '+line.substring(0,100));
                         }
                         continue;
                     }
                     var data = line.slice(6);
-                    if (data === '[DONE]') { console.log('[Write LLM] 收到[DONE]'); continue; }
+                    if (data === '[DONE]') { if (!clientGone) console.log('[Write LLM] 收到[DONE]'); continue; }
                     try {
                         var parsed = JSON.parse(data);
                         var delta = parsed.choices && parsed.choices[0] && parsed.choices[0].delta;
                         if (delta && delta.reasoning_content) {
                             fullThinking += delta.reasoning_content;
-                            res.write('data: '+JSON.stringify({type:'thinking',delta:delta.reasoning_content})+'\n\n');
+                            if (!clientGone) res.write('data: '+JSON.stringify({type:'thinking',delta:delta.reasoning_content})+'\n\n');
                         }
                         if (delta && delta.content) {
-                            if (!fullContent) console.log('[Write LLM] 首个content chunk');
+                            if (!fullContent && !clientGone) console.log('[Write LLM] 首个content chunk');
                             fullContent += delta.content;
-                            res.write('data: '+JSON.stringify({type:'content',delta:delta.content})+'\n\n');
+                            if (!clientGone) res.write('data: '+JSON.stringify({type:'content',delta:delta.content})+'\n\n');
                         }
                         if (delta && !delta.reasoning_content && !delta.content && !delta.role) {
-                            // 空delta或有其他未知字段
                             var keys = Object.keys(delta);
-                            if (keys.length) console.log('[Write LLM] 未知delta字段: '+JSON.stringify(keys));
+                            if (keys.length && !clientGone) console.log('[Write LLM] 未知delta字段: '+JSON.stringify(keys));
                         }
                         if (parsed.usage) {
                             tokIn = parsed.usage.prompt_tokens || 0;
                             tokOut = parsed.usage.completion_tokens || 0;
                         }
-                    } catch(e) { console.log('[Write LLM] JSON解析失败: '+e.message+' 原始: '+data.substring(0,80)); }
+                    } catch(e) { if (!clientGone) console.log('[Write LLM] JSON解析失败: '+e.message+' 原始: '+data.substring(0,80)); }
                 }
             }
 
-            clearInterval(heartbeat);
+            if (!clientGone) clearInterval(heartbeat);
 
-            // 保存助手回复到数据库
+            // 保存助手回复到数据库（无论客户端是否断开）
             if (fullContent || fullThinking) {
                 dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, thinking, token_used) VALUES (?,?,?,?,?,?)',
                     [projectId, 'orchestrator', 'assistant', fullContent, fullThinking, tokIn+tokOut]);
@@ -447,18 +446,19 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                 saveDB();
             }
 
-            console.log('[Write LLM] 流式完成 回复长度='+fullContent.length+' 思考长度='+fullThinking.length+' tokens in='+tokIn+' out='+tokOut);
+            console.log('[Write LLM] 流式完成 回复长度='+fullContent.length+' 思考长度='+fullThinking.length+' tokens in='+tokIn+' out='+tokOut+(clientGone?' (后台完成)':''));
 
-            res.write('data: '+JSON.stringify({
-                type:'done', content:fullContent, thinking:fullThinking,
-                token_in:tokIn, token_out:tokOut
-            })+'\n\n');
-            res.end();
+            if (!clientGone) {
+                res.write('data: '+JSON.stringify({
+                    type:'done', content:fullContent, thinking:fullThinking,
+                    token_in:tokIn, token_out:tokOut
+                })+'\n\n');
+                res.end();
+            }
 
         } catch(err) {
-            if (req.aborted) { console.log('[Write LLM] 前端断开'); return; }
             console.error('[Write LLM] 流式异常:', err.message);
-            try { res.write('data: '+JSON.stringify({type:'error',message:err.message})+'\n\n'); res.end(); } catch(e) {}
+            try { if (!res.headersSent || !res.writableEnded) { res.write('data: '+JSON.stringify({type:'error',message:err.message})+'\n\n'); res.end(); } } catch(e) {}
             dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content) VALUES (?,?,?,?)',
                 [projectId, 'orchestrator', 'assistant', '⚠️ 调用失败：'+err.message]);
             saveDB();

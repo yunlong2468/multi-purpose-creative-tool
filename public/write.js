@@ -1800,27 +1800,11 @@ function autoSave(){if(saveTimer)clearTimeout(saveTimer);saveTimer=setTimeout(fu
 
 (function(){var sseUrl='/api/write-sse?projectId='+projectId+'&token='+encodeURIComponent(token);var sse=new EventSource(sseUrl);var reconnectTimer=null;sse.addEventListener('message',function(e){try{var d=JSON.parse(e.data);if(d.type==='connected'){console.log('[Write] SSE已连接 projectId='+d.projectId);return;}if(d.type==='agent-message'&&d.msg){if(!agentBusy){var sseMsg={type:'chat',role:'assistant',time:Date.now(),agent:d.msg.agent_type,content:d.msg.content,thinking:d.msg.thinking||''};agentMsgs.push(sseMsg);appendMsgToDOM(renderSingleMsg(sseMsg));scrollToBottomIfAtBottom();console.log('[Write] SSE收到Agent消息: '+d.msg.agent_type);}}}catch(ex){console.error('[Write] SSE消息解析失败:',ex);}});sse.onerror=function(){console.log('[Write] Agent SSE断线，3秒后重连...');if(reconnectTimer)clearTimeout(reconnectTimer);reconnectTimer=setTimeout(function(){console.log('[Write] SSE重连检查');},3000);};window._writeSse=sse;})();
 
-// ===== 断线续接：刷新页面后自动恢复中断的流式回复 =====
-function resumeInterruptedStream() {
-  if (agentMsgs.length === 0) return;
-  var lastMsg = agentMsgs[agentMsgs.length - 1];
-  if (lastMsg.role !== 'user') return;
-  console.log('[Write] 检测到中断的流式回复，自动续接');
-  var resumeText = lastMsg.content;
-  agentMsgs.pop(); // 移除将被sendAgentMessage重新添加的用户消息
-  renderAgentMessages();
-  requestAnimationFrame(function() {
-    var inp = document.getElementById('agentInput');
-    if (inp) inp.value = resumeText;
-    setTimeout(function() { sendAgentMessage(); }, 300);
-  });
-}
-
 // ==================== 初始化 ====================
 api('GET','/writing-projects').then(function(projects){var p=projects?projects.find(function(x){return x.id===projectId;}):null;if(!p){window.location.replace('/projects.html');return;}writingData.title=p.title;});
 
 // 加载历史对话
-api('GET','/writing-projects/'+projectId+'/conversations').then(function(msgs){agentMsgs=[];var savedOpts=loadPickedOptions();if(msgs&&msgs.length){msgs.forEach(function(m){var meta={};try{meta=JSON.parse(m.metadata||'{}');}catch(e){}var msg={type:meta.type,time:Date.parse(m.created_at||Date.now())||'chat',role:m.role,agent:m.agent_type,content:m.content,thinking:m.thinking||''};if(m.agent_type==='orchestrator'&&savedOpts[m.content]){msg.pickedOption=savedOpts[m.content];}agentMsgs.push(msg);});console.log('[Write] 已加载 '+msgs.length+' 条历史对话');}else{console.log('[Write] 该项目暂无历史对话');}renderAgentMessages();resumeInterruptedStream();requestAnimationFrame(function(){requestAnimationFrame(function(){var c=document.getElementById('subPanelChat');if(c){c.scrollTop=c.scrollHeight;markAllRead();}});});}).catch(function(err){console.error('[Write] 加载历史对话失败:',err);renderAgentMessages();});
+api('GET','/writing-projects/'+projectId+'/conversations').then(function(msgs){agentMsgs=[];var savedOpts=loadPickedOptions();if(msgs&&msgs.length){msgs.forEach(function(m){var meta={};try{meta=JSON.parse(m.metadata||'{}');}catch(e){}var msg={type:meta.type,time:Date.parse(m.created_at||Date.now())||'chat',role:m.role,agent:m.agent_type,content:m.content,thinking:m.thinking||''};if(m.agent_type==='orchestrator'&&savedOpts[m.content]){msg.pickedOption=savedOpts[m.content];}agentMsgs.push(msg);});console.log('[Write] 已加载 '+msgs.length+' 条历史对话');}else{console.log('[Write] 该项目暂无历史对话');}renderAgentMessages();requestAnimationFrame(function(){requestAnimationFrame(function(){var c=document.getElementById('subPanelChat');if(c){c.scrollTop=c.scrollHeight;markAllRead();}});});}).catch(function(err){console.error('[Write] 加载历史对话失败:',err);renderAgentMessages();});
 
 loadOutline(); loadTokenStats();
 
