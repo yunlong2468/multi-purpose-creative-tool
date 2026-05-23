@@ -1660,14 +1660,16 @@ app.put('/api/writing-projects/:id/agent-api-config', auth, (req, res) => {
     db.run('CREATE TABLE IF NOT EXISTS token_usage_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, project_id INTEGER NOT NULL, agent_type TEXT, model TEXT, input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0, cost_input REAL DEFAULT 0.0, cost_output REAL DEFAULT 0.0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
     db.run('CREATE TABLE IF NOT EXISTS token_pricing_config (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, model_name TEXT NOT NULL, input_price_per_million REAL DEFAULT 0.0, output_price_per_million REAL DEFAULT 0.0, cache_hit_price_per_million REAL DEFAULT 0.0, discount_rate REAL DEFAULT 1.0, discount_valid_until TEXT DEFAULT \'\', is_default INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
 
-    // 默认token费用配置（DeepSeek V4 2026-05-21 含2.5折至2026-05-31）
+    // 默认token费用配置（DeepSeek V4 Pro 2026-05-31后永久降价至2.5折价格）
     var hasPricing = queryOne('SELECT id FROM token_pricing_config WHERE is_default=1 LIMIT 1');
     if (!hasPricing) {
-        dbRun('INSERT INTO token_pricing_config (user_id, model_name, input_price_per_million, output_price_per_million, cache_hit_price_per_million, discount_rate, discount_valid_until, is_default) VALUES (NULL, \'deepseek-v4-pro\', 0.1, 24.0, 0.1, 0.25, \'2026-05-31\', 1)');
+        dbRun('INSERT INTO token_pricing_config (user_id, model_name, input_price_per_million, output_price_per_million, cache_hit_price_per_million, discount_rate, discount_valid_until, is_default) VALUES (NULL, \'deepseek-v4-pro\', 0.025, 6.0, 0.025, 1.0, \'\', 1)');
         dbRun('INSERT INTO token_pricing_config (user_id, model_name, input_price_per_million, output_price_per_million, cache_hit_price_per_million, discount_rate, discount_valid_until, is_default) VALUES (NULL, \'deepseek-v4-flash\', 0.02, 2.0, 0.02, 1.0, \'\', 0)');
     }
 
-    // 迁移：给旧表加列
+
+    
+// 迁移：给旧表加列
     try { db.run('ALTER TABLE projects ADD COLUMN default_style_id INTEGER DEFAULT NULL'); } catch(e) {}
     try { db.run('ALTER TABLE image_styles ADD COLUMN cover_url TEXT DEFAULT \'\''); } catch(e) {}
     try { db.run('ALTER TABLE agents ADD COLUMN share_code TEXT'); } catch(e) {}
