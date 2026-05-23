@@ -453,16 +453,14 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     var toolArgs = tc.function.arguments || '{}';
                     var toolLabel = toolName==='generate_outline'?'大纲':toolName==='generate_characters'?'角色':toolName;
                     console.log('[Write LLM] 执行工具: '+toolName);
-                    // 缓冲：策划调用子智能体 + 思考等待状态
-                    var inviteText = '🎭 策划 邀请 '+toolLabel+' 智能体进入群聊\n';
-                    saveStreamBuffer(projectId, inviteText, '正在等待'+toolLabel+'智能体完成...', streamStartedAt);
+                    // 缓冲：系统消息放thinking，正文留空
+                    saveStreamBuffer(projectId, '', '🎭 策划调用'+toolLabel+'智能体\n正在生成中...', streamStartedAt);
                     res.write('data: '+JSON.stringify({type:'tool_start',tool:toolName})+'\n\n');
                     var toolResult = await executeToolAsync(toolName, toolArgs, projectId, req.userId);
                     console.log('[Write LLM] 工具完成: '+toolName+' '+toolResult.summary);
-                    // 缓冲：工具结果 + 完成提示
-                    var resultText = inviteText + '\n✅ ' + toolResult.summary;
-                    if (toolResult.result) resultText += '\n\n' + (toolResult.result||'').substring(0, 500);
-                    saveStreamBuffer(projectId, resultText, '', streamStartedAt);
+                    // 缓冲：完成提示放thinking(会显示用时)，正文放工具结果
+                    var resultContent = toolResult.result ? (toolResult.result||'').substring(0, 500) : toolResult.summary;
+                    saveStreamBuffer(projectId, resultContent, '✅ '+toolResult.summary, streamStartedAt);
                     res.write('data: '+JSON.stringify({type:'tool_end',tool:toolName,summary:toolResult.summary,content:toolResult.result||''})+'\n\n');
                     toolMessages.push({ role:'tool', tool_call_id:tc.id, content:JSON.stringify(toolResult) });
                 }
