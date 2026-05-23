@@ -1797,14 +1797,12 @@ var saveTimer=null, writingData={title:'',content:''};
 function autoSave(){if(saveTimer)clearTimeout(saveTimer);saveTimer=setTimeout(function(){var ed=document.getElementById('editableContent');writingData.content=ed?ed.innerHTML:'';if(writingData.chapterId){var wc=(ed.textContent||'').replace(/\s/g,'').length;api('PUT','/writing-projects/'+projectId+'/chapters/'+writingData.chapterId,{content_text:writingData.content,word_count:wc}).then(function(){console.log('[Write] 章节自动保存 id='+writingData.chapterId+' 字数='+wc);}).catch(function(e){console.error('[Write] 章节保存失败:',e);});}api('PUT','/writing-projects/'+projectId,writingData).then(function(){console.log('[Write] 项目自动保存完成');}).catch(function(e){console.error('[Write] 项目保存失败:',e);});},1000);}
 
 // ===== 断线续传：轮询磁盘缓冲 =====
-var _bufPollTimer = null, _bufLastContent = '', _bufActive = false;
+var _bufPollTimer = null, _bufLastContent = '', _bufActive = false, _bufStartedAt = 0;
 
 function pollStreamBuffer() {
   api('GET', '/writing-projects/'+projectId+'/stream-buffer').then(function(buf) {
     if (!buf || (!buf.content && !buf.thinking)) {
-      // 缓冲为空（无内容且无思考）→ 流已结束或不存在
       if (_bufActive) {
-        // 流刚结束，加载历史刷新消息列表
         _bufActive = false;
         stopBufferPolling();
         api('GET', '/writing-projects/'+projectId+'/conversations').then(function(msgs) {
@@ -1824,30 +1822,39 @@ function pollStreamBuffer() {
       }
       return;
     }
-    // 有缓冲内容 → 创建/更新流式气泡
-    if (agentBusy) { _bufPollTimer = setTimeout(pollStreamBuffer, 800); return; } // 主动流式中，跳过
+    if (agentBusy) { _bufPollTimer = setTimeout(pollStreamBuffer, 800); return; }
+    _bufStartedAt = buf.startedAt || Date.now();
     if (!_bufActive) {
       _bufActive = true;
       streamAccumThinking = '';
       streamAccumContent = '';
       createStreamingBubble('orchestrator');
     }
-    // 更新思考内容
-    if (buf.thinking && buf.thinking !== streamAccumThinking) {
-      if (!streamThinkTimer) startThinkingTimer();
-      streamAccumThinking = buf.thinking;
-      var body = streamMsgEl ? streamMsgEl.querySelector('.stream-think-body') : null;
-      if (body) body.innerHTML = escHtml(buf.thinking);
+    // 更新思考内容 + 基于服务端时间戳的计时器
+    if (buf.thinking) {
+      if (!streamThinkTimer) {
+        streamThinkSecs = Math.floor((Date.now() - _bufStartedAt) / 1000);
+        updateThinkingTimerDisplay();
+        streamThinkTimer = setInterval(function() {
+          streamThinkSecs = Math.floor((Date.now() - _bufStartedAt) / 1000);
+          updateThinkingTimerDisplay();
+        }, 1000);
+      }
+      if (buf.thinking !== streamAccumThinking) {
+        streamAccumThinking = buf.thinking;
+        var body = streamMsgEl ? streamMsgEl.querySelector('.stream-think-body') : null;
+        if (body) body.innerHTML = escHtml(buf.thinking);
+      }
     }
     // 更新正文内容
-    if (buf.content !== streamAccumContent) {
-      streamAccumContent = buf.content;
-      if (buf.content && !streamFirstContent) {
+    if (buf.content && buf.content !== streamAccumContent) {
+      if (!streamFirstContent) {
         streamFirstContent = true;
         finalizeThinkingTimer();
         var cel = streamMsgEl ? streamMsgEl.querySelector('.stream-content') : null;
         if (cel) cel.style.display = '';
       }
+      streamAccumContent = buf.content;
       var cel = streamMsgEl ? streamMsgEl.querySelector('.stream-content') : null;
       if (cel) cel.innerHTML = escHtml(buf.content).replace(/\n/g, '<br>');
       scrollToBottom();

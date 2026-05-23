@@ -21,8 +21,8 @@ if (!fs.existsSync(BUFFER_DIR)) fs.mkdirSync(BUFFER_DIR, { recursive: true });
 
 // 流式输出磁盘缓冲（断线续传用）
 function streamBufferPath(projectId) { return path.join(BUFFER_DIR, 'stream_'+projectId+'.json'); }
-function saveStreamBuffer(projectId, content, thinking) {
-    try { fs.writeFileSync(streamBufferPath(projectId), JSON.stringify({content:content, thinking:thinking, updatedAt:Date.now()})); } catch(e) {}
+function saveStreamBuffer(projectId, content, thinking, startedAt) {
+    try { fs.writeFileSync(streamBufferPath(projectId), JSON.stringify({content:content, thinking:thinking, startedAt:startedAt, updatedAt:Date.now()})); } catch(e) {}
 }
 function clearStreamBuffer(projectId) {
     try { if (fs.existsSync(streamBufferPath(projectId))) fs.unlinkSync(streamBufferPath(projectId)); } catch(e) {}
@@ -385,6 +385,7 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
             var fullThinking = '';
             var tokIn = 0, tokOut = 0;
             var chunkCount = 0;
+            var streamStartedAt = Date.now();
 
             // 心跳保活（10秒间隔）；若写入失败说明客户端已断开→转入后台模式
             var heartbeat = setInterval(function() {
@@ -427,7 +428,7 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                             if (!clientGone) res.write('data: '+JSON.stringify({type:'content',delta:delta.content})+'\n\n');
                         }
                         // 写入磁盘缓冲（断线续传用）
-                        saveStreamBuffer(projectId, fullContent, fullThinking);
+                        saveStreamBuffer(projectId, fullContent, fullThinking, streamStartedAt);
                         // 广播给 write-sse 客户端
                         if (delta && (delta.reasoning_content || delta.content)) {
                             broadcastWriteEvent(projectId, {type:delta.reasoning_content?'thinking':'content',delta:delta.reasoning_content||delta.content});
