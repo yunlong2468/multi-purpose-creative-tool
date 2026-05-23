@@ -424,6 +424,10 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
         dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content) VALUES (?,?,?,?)',
             [projectId, 'user', 'user', content]);
 
+        // 立即写缓冲——让刷新后的轮询器知道有活跃流
+        var streamStartedAt = Date.now();
+        saveStreamBuffer(projectId, '', '正在分析需求...', streamStartedAt);
+
         // === MCP风格工具调用循环 ===
         var toolMessages = JSON.parse(JSON.stringify(msgs)); // 深拷贝用于工具循环
         var toolLoopCount = 0;
@@ -509,7 +513,6 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
             var fullThinking = '';
             var tokIn = 0, tokOut = 0;
             var chunkCount = 0;
-            var streamStartedAt = Date.now();
 
             // 心跳保活（10秒间隔）；若写入失败说明客户端已断开→转入后台模式
             var heartbeat = setInterval(function() {
