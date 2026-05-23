@@ -335,6 +335,8 @@ app.post('/api/writing-projects/:id/llm-call', auth, (req, res) => {
         method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
         body:JSON.stringify(reqBody)
     }).then(function(r){ return r.json(); }).then(function(d) {
+        // 用户点击停止断开连接 → 不保存响应到数据库
+        if (req.aborted || req.destroyed) { console.log('[Write LLM] 前端已断开，放弃保存'); return; }
         var reply = (d.choices && d.choices[0] && d.choices[0].message) ? d.choices[0].message.content : '';
         var thinking = (d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.reasoning_content) ? d.choices[0].message.reasoning_content : '';
         if (!reply) { console.log('[Write LLM] 空响应'); reply='（模型未返回内容，请重试）'; }
@@ -350,8 +352,10 @@ app.post('/api/writing-projects/:id/llm-call', auth, (req, res) => {
             [req.userId, projectId, 'orchestrator', model, tokIn, tokOut]);
         saveDB();
 
+        // 再次检查（保存前可能又断开），但此时已保存完成
         res.json({ content:reply, thinking:thinking||'', token_in:tokIn, token_out:tokOut });
     }).catch(function(err) {
+        if (req.aborted || req.destroyed) { console.log('[Write LLM] 前端已断开，放弃错误保存'); return; }
         console.error('[Write LLM] 调用失败:',err.message);
         dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content) VALUES (?,?,?,?)', [projectId, 'orchestrator', 'assistant', '⚠️ 调用失败：'+err.message]);
         saveDB();
@@ -380,7 +384,7 @@ app.post('/api/writing-projects/:id/generate-dialog', auth, (req, res) => {
             if (c) { context += '角色档案：\n'+c.profile_json+'\n'; }
         });
     }
-    callOutlineLLM(projectId, req.userId, DIALOG_SYSTEM, context, 'dialog', function(result) {
+    callOutlineLLM(projectId, req.userId, DIALOG_SYSTEM, context, 'dialog', req, function(result) {
         if (result.error) return res.status(500).json({ error:result.error });
         res.json(result);
     });
@@ -500,7 +504,7 @@ app.post('/api/writing-projects/:id/generate-characters', auth, (req, res) => {
         if (m.role==='user') context += '用户：'+m.content+'\n';
         else if (m.role==='assistant') context += 'Agent：'+m.content+'\n';
     });
-    callOutlineLLM(projectId, req.userId, CHARACTER_SYSTEM, context, 'character', function(result) {
+    callOutlineLLM(projectId, req.userId, CHARACTER_SYSTEM, context, 'character', req, function(result) {
         if (result.error) return res.status(500).json({ error:result.error });
         res.json(result);
     });
@@ -531,7 +535,7 @@ var OUTLINER_SYSTEM = '你是小说大纲生成专家。根据用户提供的小
 '- 每个关键事件应该有推进剧情的作用\n'+
 '- 章名可以简洁但不能空洞';
 
-function callOutlineLLM(projectId, userId, systemPrompt, userContent, agentType, callback) {
+function callOutlineLLM(projectId, userId, systemPrompt, userContent, agentType, callback, req) {
     var llmAgent = queryOne('SELECT * FROM agents WHERE user_id=? ORDER BY id LIMIT 1', [userId]);
     if (!llmAgent || !llmAgent.api_key) { callback({ error:'请先在智能体管理页面配置至少一个AI模型' }); return; }
     var agentConfig = queryOne('SELECT * FROM writing_agent_config WHERE project_id=? AND agent_type=?', [projectId, agentType]);
@@ -539,10 +543,12 @@ function callOutlineLLM(projectId, userId, systemPrompt, userContent, agentType,
     var reqBody = { model:model, messages:[{ role:'system', content:systemPrompt },{ role:'user', content:userContent }], temperature:0.6, stream:false };
     console.log('[Writing '+agentType+'] 调用 model='+model+' prompt长度='+userContent.length);
     dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content) VALUES (?,?,?,?)', [projectId, agentType, 'user', userContent]);
+    var checkAbort = req || {};
     fetch(llmAgent.api_endpoint, {
         method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+llmAgent.api_key},
         body:JSON.stringify(reqBody)
     }).then(function(r){ return r.json(); }).then(function(d) {
+        if (checkAbort.aborted || checkAbort.destroyed) { console.log('[Writing '+agentType+'] 前端已断开'); return; }
         var reply = (d.choices && d.choices[0] && d.choices[0].message) ? d.choices[0].message.content : '';
         if (!reply) { console.log('[Writing '+agentType+'] 空响应'); callback({ error:'模型未返回内容' }); return; }
         var tokIn = (d.usage && d.usage.prompt_tokens)||0, tokOut = (d.usage && d.usage.completion_tokens)||0;
@@ -552,6 +558,7 @@ function callOutlineLLM(projectId, userId, systemPrompt, userContent, agentType,
         saveDB();
         callback({ content:reply, token_in:tokIn, token_out:tokOut });
     }).catch(function(err) {
+        if (checkAbort.aborted || checkAbort.destroyed) { console.log('[Writing '+agentType+'] 前端已断开'); return; }
         console.error('[Writing '+agentType+'] 调用失败:',err.message);
         callback({ error:err.message });
     });
@@ -578,7 +585,7 @@ app.post('/api/writing-projects/:id/generate-outline', auth, (req, res) => {
     });
     context += '\n请根据以上信息生成完整的小说大纲（分卷分章）。';
 
-    callOutlineLLM(projectId, req.userId, OUTLINER_SYSTEM, context, 'outliner', function(result) {
+    callOutlineLLM(projectId, req.userId, OUTLINER_SYSTEM, context, 'outliner', req, function(result) {
         if (result.error) return res.status(500).json({ error:result.error });
         res.json(result);
     });
@@ -1357,7 +1364,7 @@ app.post('/api/writing-projects/:id/crawl-books', auth, (req, res) => {
     var { platform, html_content } = req.body;
     console.log('[Writing 爬虫] 项目='+projectId+' 平台='+(platform||'手动'));
     if (!html_content) return res.status(400).json({ error:'需要提供HTML内容' });
-    callOutlineLLM(projectId, req.userId, CRAWLER_SYSTEM, '请从以下HTML提取小说信息：\n平台：'+(platform||'未知')+'\nHTML：'+html_content.substring(0, 30000), 'crawler', function(result) {
+    callOutlineLLM(projectId, req.userId, CRAWLER_SYSTEM, '请从以下HTML提取小说信息：\n平台：'+(platform||'未知')+'\nHTML：'+html_content.substring(0, 30000), 'crawler', req, function(result) {
         if (result.error) return res.status(500).json({ error:result.error });
         // 尝试解析并存储
         try {
@@ -1455,7 +1462,7 @@ app.post('/api/writing-projects/:id/optimize-skill', auth, (req, res) => {
     });
     console.log('[Writing Skill] 分析 '+logs.length+' 条行为日志');
     var skillPrompt = '你是技能优化专家。根据用户的行为日志，总结用户的偏好模式，设计一段 system prompt（中文，200-500字），作为该用户的定制写作Skill。\n\n要求：\n1. 针对用户的行为习惯进行优化\n2. 包含具体的写作指导、风格偏好、常见指令\n3. 只输出system prompt内容，不要加额外说明';
-    callOutlineLLM(projectId, req.userId, skillPrompt, context, 'skill_optimizer', function(result) {
+    callOutlineLLM(projectId, req.userId, skillPrompt, context, 'skill_optimizer', req, function(result) {
         if (result.error) return res.status(500).json({ error:result.error });
         var nameCn = '写作优化Skill #'+(logs.length);
         dbRun('INSERT INTO optimized_skills (user_id, name_cn, name_en, content, source) VALUES (?,?,?,?,?)',
@@ -1490,7 +1497,7 @@ app.post('/api/writing-projects/:id/review-chapter', auth, (req, res) => {
     // 加上前面章节的角色信息
     var chars = queryAll('SELECT * FROM writing_characters WHERE project_id=?', [projectId]);
     chars.forEach(function(c) { context += '角色['+c.name+']: '+c.profile_json+'\n'; });
-    callOutlineLLM(projectId, req.userId, REVIEWER_SYSTEM, context, 'reviewer', function(result) {
+    callOutlineLLM(projectId, req.userId, REVIEWER_SYSTEM, context, 'reviewer', req, function(result) {
         if (result.error) return res.status(500).json({ error:result.error });
         res.json({ content:result.content });
     });
