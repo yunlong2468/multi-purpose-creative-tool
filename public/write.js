@@ -1,4 +1,4 @@
-console.log("=== write.js v20260523_dual5 已加载 ===");
+console.log("=== write.js v20260523_murmur3 已加载 ===");
 // ===== Pane System =====
 var paneGroups = [];
 var paneCounter = 0;
@@ -1479,7 +1479,7 @@ function createStreamingBubble(agentType) {
     + '<span class="typing-dots"><b></b><b></b><b></b></span>'
     + '</span>'
     + '<div class="think-body show stream-think-body" style="max-height:200px;overflow-y:auto;text-align:left;"></div>'
-    + '<div class="stream-content" style="display:none;"></div>'
+    + '<div class="stream-content" style="display:none;max-height:360px;overflow-y:auto;text-align:left;overflow-wrap:break-word;"></div>'
     + '</div></div>';
   var sentinel = inner.querySelector('.msg-sentinel');
   if (sentinel) sentinel.insertAdjacentHTML('beforebegin', html);
@@ -1670,28 +1670,48 @@ async function doStreamingCall(text) {
             if (streamConnTimeout) { clearTimeout(streamConnTimeout); streamConnTimeout = null; }
             finalizeStreamingMsg(evt);
           } else if (evt.type === 'tool_start') {
-            // 调配师调用子智能体 → 显示系统消息
+            // 调配师调用子智能体 → 显示系统消息 + 子智能体气泡 + 启动短语轮播
             var toolNames = {generate_outline:'大纲',generate_characters:'角色',generate_dialog:'对话',crawl_books:'爬虫',review_chapter:'审核',optimize_skill:'技能优化'};
             var toolLabel = toolNames[evt.tool] || evt.tool;
             var inviteMsg = {type:'system',content:getAgentName('orchestrator')+' 调用 '+toolLabel+' 智能体',time:Date.now()};
             agentMsgs.push(inviteMsg);
             if (ensureMsgInner()) appendMsgToDOM(renderSingleMsg(inviteMsg));
-            pendingAgent = {agent:evt.tool,label:toolLabel+'智能体',icon:getAgentIcon(evt.tool)};
-            if (ensureMsgInner()) renderPendingAgent();
-          } else if (evt.type === 'tool_end') {
+            // 创建子智能体流式气泡并启动牛马碎碎念轮播
+            var toolAgentType = evt.tool === 'generate_outline' ? 'outliner' : evt.tool === 'generate_characters' ? 'character' : evt.tool;
+            _ensureToolBubble(toolAgentType);
+            _startPhraseRotation();
             pendingAgent = null;
-            if (ensureMsgInner()) renderPendingAgent();
-            // 子智能体回复内容作为独立消息展示
-            if (evt.content) {
-              var agentType = evt.tool === 'generate_outline' ? 'outliner' : evt.tool === 'generate_characters' ? 'character' : evt.tool;
-              var toolMsg = {type:'chat',role:'assistant',agent:agentType,content:evt.content,thinking:'',time:Date.now()};
+          } else if (evt.type === 'tool_end') {
+            _stopPhraseRotation();
+            var toolAgentType = evt.tool === 'generate_outline' ? 'outliner' : evt.tool === 'generate_characters' ? 'character' : evt.tool;
+            // 更新子智能体气泡为实际结果
+            if (_toolStreamEl) {
+              var tBody = _toolStreamEl.querySelector('.stream-think-body');
+              if (tBody) tBody.innerHTML = escHtml(evt.summary || '已完成');
+              var tLabel = _toolStreamEl.querySelector('.toggle-label');
+              if (tLabel) tLabel.textContent = '💭 结果摘要';
+              if (evt.content) {
+                var tContent = _toolStreamEl.querySelector('.stream-content');
+                if (tContent) { tContent.style.display = ''; tContent.innerHTML = formatAgentContent(evt.content); }
+              }
+              // 追加结果消息到agentMsgs（持久化用，不重复插入DOM）
+              var toolMsg = {type:'chat',role:'assistant',agent:toolAgentType,content:evt.content||'',thinking:'',time:Date.now()};
               agentMsgs.push(toolMsg);
-              if (ensureMsgInner()) appendMsgToDOM(renderSingleMsg(toolMsg));
+              var leaveMsg = {type:'system',content:evt.summary||'子智能体已完成',time:Date.now()};
+              agentMsgs.push(leaveMsg);
+              // 关闭流式状态，保留DOM
+              _closeToolBubble();
+            } else {
+              // 兜底：气泡不存在时用旧逻辑
+              if (evt.content) {
+                var toolMsg2 = {type:'chat',role:'assistant',agent:toolAgentType,content:evt.content,thinking:'',time:Date.now()};
+                agentMsgs.push(toolMsg2);
+                if (ensureMsgInner()) appendMsgToDOM(renderSingleMsg(toolMsg2));
+              }
+              var leaveMsg2 = {type:'system',content:evt.summary||'子智能体已完成',time:Date.now()};
+              agentMsgs.push(leaveMsg2);
+              if (ensureMsgInner()) appendMsgToDOM(renderSingleMsg(leaveMsg2));
             }
-            // 结果摘要
-            var leaveMsg = {type:'system',content:evt.summary||'子智能体已完成',time:Date.now()};
-            agentMsgs.push(leaveMsg);
-            if (ensureMsgInner()) appendMsgToDOM(renderSingleMsg(leaveMsg));
             // 刷大纲/角色面板
             if (evt.tool === 'generate_outline') { setTimeout(function(){loadOutline();}, 500); }
             if (evt.tool === 'generate_characters') { setTimeout(function(){loadCharacters();}, 500); }
@@ -1973,6 +1993,7 @@ function pollStreamBuffer() {
       }
       // 创建子智能体流式气泡（独立于调配师静态消息）
       _ensureToolBubble(agentType);
+      _startPhraseRotation();
       _bufPollTimer = setTimeout(pollStreamBuffer, 2000);
       return;
     }
@@ -1982,6 +2003,7 @@ function pollStreamBuffer() {
       _bufActive = true; setBusyUI(true);
       _currentStreamAgent = agentType;
       _ensureToolBubble(agentType);
+      _stopPhraseRotation();
       // 工具结果摘要只显示在子智能体气泡中
       if (buf.thinking && _toolStreamEl) {
         var tBody2 = _toolStreamEl.querySelector('.stream-think-body');
@@ -1994,7 +2016,7 @@ function pollStreamBuffer() {
         var tContent = _toolStreamEl.querySelector('.stream-content');
         if (tContent) {
           tContent.style.display = '';
-          tContent.innerHTML = escHtml(replaceAgentPlaceholders(buf.content)).replace(/\n/g, '<br>');
+          tContent.innerHTML = formatAgentContent(replaceAgentPlaceholders(buf.content));
         }
       }
       _toolSysPhase = ''; // 重置，允许下次tool_calling再发系统消息
@@ -2054,6 +2076,42 @@ function pollStreamBuffer() {
   });
 }
 
+// 子智能体思考时轮播的牛马抱怨语录（每条≤20字，每5秒换一条）
+var _toolPhrases = [
+  "又是当牛马的一天...", "正在拼命搬砖中...", "老板画饼，我先吃为敬",
+  "这福报谁爱修谁修", "工资不涨活越来越多", "摸鱼被发现了，完蛋",
+  "需求已经改到第8版了", "我只是一颗螺丝钉", "咖啡续命中，勿扰",
+  "改完这版我就辞职", "KPI是什么能吃吗", "打工魂正在熊熊燃烧",
+  "等我发财就炒了老板", "疯狂输出中，生人勿近", "这破班不上也罢",
+  "方案改到怀疑人生了", "不想上班，只想躺平", "工资条比脸还干净",
+  "看在钱的份上，忍了", "再催单我就原地爆炸", "头发快掉光了，愁",
+  "干最多活拿最少钱", "退休？遥遥无期...", "好的老板，马上改！"
+];
+var _toolPhraseIdx = 0;
+var _toolPhraseTimer = null;
+
+function _startPhraseRotation() {
+  if (_toolPhraseTimer) return;
+  _toolPhraseIdx = Math.floor(Math.random() * _toolPhrases.length);
+  _updatePhraseDisplay();
+  _toolPhraseTimer = setInterval(function() {
+    _toolPhraseIdx = (_toolPhraseIdx + 1) % _toolPhrases.length;
+    _updatePhraseDisplay();
+  }, 5000);
+}
+
+function _updatePhraseDisplay() {
+  if (!_toolStreamEl) return;
+  var body = _toolStreamEl.querySelector('.stream-think-body');
+  if (body) body.innerHTML = escHtml(_toolPhrases[_toolPhraseIdx]);
+  var label = _toolStreamEl.querySelector('.toggle-label');
+  if (label) label.textContent = '💭 牛马碎碎念';
+}
+
+function _stopPhraseRotation() {
+  if (_toolPhraseTimer) { clearInterval(_toolPhraseTimer); _toolPhraseTimer = null; }
+}
+
 // 子智能体流式气泡辅助函数
 function _ensureToolBubble(agentType) {
   if (_toolStreamEl && _toolStreamAgent === agentType) return;
@@ -2072,7 +2130,7 @@ function _ensureToolBubble(agentType) {
     + '<span class="typing-dots"><b></b><b></b><b></b></span>'
     + '</span>'
     + '<div class="think-body show stream-think-body" style="max-height:200px;overflow-y:auto;text-align:left;"></div>'
-    + '<div class="stream-content" style="display:none;"></div>'
+    + '<div class="stream-content" style="display:none;max-height:360px;overflow-y:auto;text-align:left;overflow-wrap:break-word;"></div>'
     + '</div></div>';
   var sentinel = inner.querySelector('.msg-sentinel');
   if (sentinel) sentinel.insertAdjacentHTML('beforebegin', html);
@@ -2081,6 +2139,7 @@ function _ensureToolBubble(agentType) {
 }
 
 function _closeToolBubble() {
+  _stopPhraseRotation();
   if (_toolStreamEl) {
     _toolStreamEl.classList.remove('msg-streaming', 'msg-tool-stream');
     var dots = _toolStreamEl.querySelector('.typing-dots');
