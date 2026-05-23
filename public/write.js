@@ -1911,24 +1911,13 @@ function pollStreamBuffer() {
         _bufActive = false;
         setBusyUI(false);
         stopBufferPolling();
-        api('GET', '/writing-projects/'+projectId+'/conversations').then(function(msgs) {
-          agentMsgs = [];
-          var savedOpts = loadPickedOptions();
-          if (msgs && msgs.length) {
-            msgs.forEach(function(m) {
-              var meta = {};
-              try { meta = JSON.parse(m.metadata || '{}'); } catch(e) {}
-              var msg = { type: meta.type, time: Date.parse(m.created_at || Date.now()) || 'chat', role: m.role, agent: m.agent_type, content: m.content, thinking: m.thinking || '' };
-              if (m.agent_type === 'orchestrator' && savedOpts[m.content]) msg.pickedOption = savedOpts[m.content];
-              agentMsgs.push(msg);
-            });
-          }
-          renderAgentMessages();
-        }).catch(function() {});
+        reloadHistoryFromDB();
+      } else {
+        // 缓冲从未激活→后端可能已完成→直接加载历史
+        reloadHistoryFromDB();
       }
       return;
     }
-    if (!_bufActive) return; // 用户已发新消息，放弃飞行中的轮询结果
     if (agentBusy) { _bufPollTimer = setTimeout(pollStreamBuffer, 800); return; }
     _bufStartedAt = buf.startedAt || Date.now();
     if (!_bufActive) {
@@ -1972,6 +1961,24 @@ function pollStreamBuffer() {
   }).catch(function() {
     _bufPollTimer = setTimeout(pollStreamBuffer, 1000);
   });
+}
+
+function reloadHistoryFromDB() {
+  api('GET', '/writing-projects/'+projectId+'/conversations').then(function(msgs) {
+    agentMsgs = [];
+    var savedOpts = loadPickedOptions();
+    if (msgs && msgs.length) {
+      msgs.forEach(function(m) {
+        var meta = {};
+        try { meta = JSON.parse(m.metadata || '{}'); } catch(e) {}
+        var msg = { type: meta.type, time: Date.parse(m.created_at || Date.now()) || 'chat', role: m.role, agent: m.agent_type, content: m.content, thinking: m.thinking || '' };
+        if (m.agent_type === 'orchestrator' && savedOpts[m.content]) msg.pickedOption = savedOpts[m.content];
+        agentMsgs.push(msg);
+      });
+    }
+    renderAgentMessages();
+    scrollToBottom();
+  }).catch(function() {});
 }
 
 function stopBufferPolling() {
