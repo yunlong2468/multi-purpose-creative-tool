@@ -1795,10 +1795,76 @@ function loadTokenStats(){api('GET','/writing-projects/'+projectId+'/token-stats
 var saveTimer=null, writingData={title:'',content:''};
 function autoSave(){if(saveTimer)clearTimeout(saveTimer);saveTimer=setTimeout(function(){var ed=document.getElementById('editableContent');writingData.content=ed?ed.innerHTML:'';if(writingData.chapterId){var wc=(ed.textContent||'').replace(/\s/g,'').length;api('PUT','/writing-projects/'+projectId+'/chapters/'+writingData.chapterId,{content_text:writingData.content,word_count:wc}).then(function(){console.log('[Write] 章节自动保存 id='+writingData.chapterId+' 字数='+wc);}).catch(function(e){console.error('[Write] 章节保存失败:',e);});}api('PUT','/writing-projects/'+projectId,writingData).then(function(){console.log('[Write] 项目自动保存完成');}).catch(function(e){console.error('[Write] 项目保存失败:',e);});},1000);}
 
+// ===== 断线续传：write-sse 事件处理 =====
+var _sseStreamActive = false;
+
+function handleSseReplay(d) {
+  // 回放已生成的内容（断线重连时）
+  if (agentBusy) return; // 正在主动流式中，忽略回放
+  if (!_sseStreamActive) {
+    _sseStreamActive = true;
+    streamAccumThinking = '';
+    streamAccumContent = '';
+    createStreamingBubble('orchestrator');
+    // 立即启动思考计时显示
+    startThinkingTimer();
+  }
+  if (d.type === 'thinking-replay') {
+    streamAccumThinking = d.delta;
+    var body = streamMsgEl ? streamMsgEl.querySelector('.stream-think-body') : null;
+    if (body) body.innerHTML = escHtml(d.delta);
+  } else if (d.type === 'content-replay') {
+    streamAccumContent = d.delta;
+    streamFirstContent = true;
+    finalizeThinkingTimer();
+    var cel = streamMsgEl ? streamMsgEl.querySelector('.stream-content') : null;
+    if (cel) { cel.style.display = ''; cel.innerHTML = escHtml(d.delta).replace(/\n/g, '<br>'); }
+  }
+  scrollToBottom();
+}
+
+function handleSseStream(d) {
+  if (agentBusy) return; // 正在主动流式中，忽略SSE广播
+  if (!_sseStreamActive) {
+    _sseStreamActive = true;
+    createStreamingBubble('orchestrator');
+  }
+  if (d.type === 'thinking') {
+    if (!streamThinkTimer) startThinkingTimer();
+    appendThinkingDelta(d.delta);
+  } else if (d.type === 'content') {
+    appendContentDelta(d.delta);
+  }
+}
+
+function handleSseStreamDone(d) {
+  if (agentBusy || !_sseStreamActive) return;
+  _sseStreamActive = false;
+  // 用最终内容替换流式气泡
+  if (streamThinkTimer) { clearInterval(streamThinkTimer); streamThinkTimer = null; }
+  var msg = {
+    type: 'chat',
+    role: 'assistant',
+    agent: 'orchestrator',
+    content: d.content || streamAccumContent || '',
+    thinking: d.thinking || streamAccumThinking || '',
+    time: Date.now()
+  };
+  agentMsgs.push(msg);
+  var finalHtml = renderSingleMsg(msg);
+  var streamEl = document.querySelector('.msg-streaming');
+  if (streamEl) streamEl.outerHTML = finalHtml;
+  streamMsgEl = null;
+  streamAccumThinking = '';
+  streamAccumContent = '';
+  streamFirstContent = false;
+  scrollToBottomIfAtBottom();
+}
+
 // ==================== SSE ====================
 (function(){var sse=new EventSource('/api/sse?token='+encodeURIComponent(token));sse.addEventListener('message',function(e){try{var d=JSON.parse(e.data);if(d.type==='kicked'){localStorage.removeItem('canvas_token');localStorage.removeItem('canvas_username');window.location.replace('/login.html?reason=kicked');}}catch(ex){}});sse.onerror=function(){console.log('[Write] 踢出SSE断线，自动重连中...');};})();
 
-(function(){var sseUrl='/api/write-sse?projectId='+projectId+'&token='+encodeURIComponent(token);var sse=new EventSource(sseUrl);var reconnectTimer=null;sse.addEventListener('message',function(e){try{var d=JSON.parse(e.data);if(d.type==='connected'){console.log('[Write] SSE已连接 projectId='+d.projectId);return;}if(d.type==='agent-message'&&d.msg){if(!agentBusy){var sseMsg={type:'chat',role:'assistant',time:Date.now(),agent:d.msg.agent_type,content:d.msg.content,thinking:d.msg.thinking||''};agentMsgs.push(sseMsg);appendMsgToDOM(renderSingleMsg(sseMsg));scrollToBottomIfAtBottom();console.log('[Write] SSE收到Agent消息: '+d.msg.agent_type);}}}catch(ex){console.error('[Write] SSE消息解析失败:',ex);}});sse.onerror=function(){console.log('[Write] Agent SSE断线，3秒后重连...');if(reconnectTimer)clearTimeout(reconnectTimer);reconnectTimer=setTimeout(function(){console.log('[Write] SSE重连检查');},3000);};window._writeSse=sse;})();
+(function(){var sseUrl='/api/write-sse?projectId='+projectId+'&token='+encodeURIComponent(token);var sse=new EventSource(sseUrl);sse.addEventListener('message',function(e){try{var d=JSON.parse(e.data);if(d.type==='connected'){console.log('[Write] SSE已连接 projectId='+d.projectId);return;}if(d.type==='thinking-replay'||d.type==='content-replay'){handleSseReplay(d);return;}if(d.type==='thinking'||d.type==='content'){handleSseStream(d);return;}if(d.type==='stream-done'){handleSseStreamDone(d);return;}if(d.type==='agent-message'&&d.msg){if(!agentBusy){var sseMsg={type:'chat',role:'assistant',time:Date.now(),agent:d.msg.agent_type,content:d.msg.content,thinking:d.msg.thinking||''};agentMsgs.push(sseMsg);appendMsgToDOM(renderSingleMsg(sseMsg));scrollToBottomIfAtBottom();}}}catch(ex){}});sse.onerror=function(){console.log('[Write] Agent SSE断线，自动重连中...');};window._writeSse=sse;})();
 
 // 页面刷新/关闭前通知后端终止SSE连接（让后端检测req.aborted并转入后台）
 window.addEventListener('beforeunload', function() {
