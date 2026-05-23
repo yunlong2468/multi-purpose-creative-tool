@@ -1,3 +1,4 @@
+console.log('[Write] JS已加载 token='+(typeof token!=='undefined'&&!!token)+' pid='+projectId);
 // ===== Pane System =====
 var paneGroups = [];
 var paneCounter = 0;
