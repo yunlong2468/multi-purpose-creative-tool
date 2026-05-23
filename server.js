@@ -477,6 +477,7 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, thinking, token_used) VALUES (?,?,?,?,?,?)', [projectId, 'orchestrator', 'assistant', finalContent, finalThinking, (toolData.usage?toolData.usage.total_tokens:0)]);
                     saveDB();
                 }
+                clearStreamBuffer(projectId);
                 res.write('data: '+JSON.stringify({type:'done',content:finalContent,thinking:finalThinking})+'\n\n');
                 res.end();
                 return;
