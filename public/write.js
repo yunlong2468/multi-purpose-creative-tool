@@ -1396,10 +1396,6 @@ function sendAgentMessage() {
   var inp=document.getElementById('agentInput'); if(!inp)return;
   var text=inp.value.trim(); if(!text||agentBusy)return;
   inp.value=''; setBusyUI(true);
-  // 清理未发送前的撤回提示
-  for (var i = agentMsgs.length-1; i >= 0; i--) {
-    if (agentMsgs[i].type === 'undo_notice') { agentMsgs.splice(i, 1); }
-  }
   console.log('[Write] 用户发送: '+text.substring(0,100));
   markAllRead();
   var now = Date.now();
