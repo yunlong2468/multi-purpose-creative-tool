@@ -1072,9 +1072,8 @@ function fmtTime(ts) {
   return (d.getMonth()+1)+'-'+d.getDate()+' '+time;
 }
 
-function parseOptBtns(rawText, agentType) {
+function parseOptBtns(rawText, agentType, pickedOption) {
   if (agentType !== 'orchestrator') return {html:formatAgentContent(rawText), btns:''};
-  // 在原始文本层面按行解析 — 行匹配 "^ - [按钮文字] $"（前后允许空格）
   var lines = rawText.split('\n');
   var btns = [];
   var kept = [];
@@ -1087,7 +1086,11 @@ function parseOptBtns(rawText, agentType) {
   if (!btns.length) return {html:html, btns:''};
   var btnHtml = '<div class="opt-btns">';
   btns.forEach(function(t) {
-    btnHtml += '<button class="opt-btn" data-opt="'+escHtml(t)+'" onclick="event.stopPropagation();clickOption(this)">'+escHtml(t)+'</button>';
+    var cls = 'opt-btn';
+    if (pickedOption) {
+      cls += (t === pickedOption) ? ' picked' : ' gone';
+    }
+    btnHtml += '<button class="'+cls+'" data-opt="'+escHtml(t)+'" onclick="event.stopPropagation();clickOption(this)">'+escHtml(t)+'</button>';
   });
   btnHtml += '</div>';
   return {html:html, btns:btnHtml};
@@ -1095,6 +1098,12 @@ function parseOptBtns(rawText, agentType) {
 
 function clickOption(btn) {
   var text = btn.getAttribute('data-opt'); if (!text) return;
+  // 标记对应消息数据中的已选选项（持久化，刷新后状态保留）
+  var msgEl = btn.closest('.msg');
+  if (msgEl) {
+    var mi = parseInt(msgEl.getAttribute('data-msg-idx'));
+    if (!isNaN(mi) && agentMsgs[mi]) { agentMsgs[mi].pickedOption = text; }
+  }
   var btns = btn.parentElement.querySelectorAll('.opt-btn');
   btns.forEach(function(b) {
     if (b === btn) { b.classList.add('picked'); b.classList.remove('gone'); }
@@ -1116,9 +1125,10 @@ function renderSingleMsg(m) {
     return'<div class="msg user-msg" data-msg-idx="'+idx+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" onmousedown="if(event.button===2){event.preventDefault();event.stopPropagation()}" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+idx+')">'+escHtml(m.content)+t+'</div></div>';
   }
   var avatar=getAgentIcon(m.agent);
-  var parsed = parseOptBtns(m.content, m.agent);
+  var idx = agentMsgs.indexOf(m);
+  var parsed = parseOptBtns(m.content, m.agent, m.pickedOption);
   var contentHtml = parsed.html + parsed.btns;
-  var h='<div class="msg agent-msg"><div class="avatar" style="font-size:17px;">'+avatar+'</div><div class="bubble">';
+  var h='<div class="msg agent-msg" data-msg-idx="'+idx+'"><div class="avatar" style="font-size:17px;">'+avatar+'</div><div class="bubble">';
   h+='<div style="font-size:11px;color:var(--accent);padding:4px;margin:-4px 0 -6px -4px;cursor:pointer;display:inline-block;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
   if(m.thinking){h+='<span class="think-toggle" onclick="var b=this.nextElementSibling;b.classList.toggle(\'show\');this.textContent=b.classList.contains(\'show\')?\'💭 收起思考\':\'💭 思考过程\'">💭 思考过程</span>';h+='<div class="think-body">'+formatAgentContent(m.thinking)+'</div>';}
   h+=contentHtml+t+'</div></div>';
@@ -1171,9 +1181,9 @@ function renderAgentMessages() {
     }
     else {
       var avatar=getAgentIcon(m.agent);
-      var parsed = parseOptBtns(m.content, m.agent);
+      var parsed = parseOptBtns(m.content, m.agent, m.pickedOption);
   var contentHtml = parsed.html + parsed.btns;
-      html+='<div class="msg agent-msg"><div class="avatar" style="font-size:17px;">'+avatar+'</div><div class="bubble">';
+      html+='<div class="msg agent-msg" data-msg-idx="'+i+'"><div class="avatar" style="font-size:17px;">'+avatar+'</div><div class="bubble">';
       html+='<div style="font-size:11px;color:var(--accent);padding:4px;margin:-4px 0 -6px -4px;cursor:pointer;display:inline-block;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
       if(m.thinking){html+='<span class="think-toggle" onclick="var b=this.nextElementSibling;b.classList.toggle(\'show\');this.textContent=b.classList.contains(\'show\')?\'💭 收起思考\':\'💭 思考过程\'">💭 思考过程</span>';html+='<div class="think-body">'+formatAgentContent(m.thinking)+'</div>';}
       html+=contentHtml+t+'</div></div>';
