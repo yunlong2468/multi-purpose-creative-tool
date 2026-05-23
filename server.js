@@ -448,9 +448,11 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     var toolName = tc.function.name;
                     var toolArgs = tc.function.arguments || '{}';
                     console.log('[Write LLM] 执行工具: '+toolName);
+                    saveStreamBuffer(projectId, '', '正在调用'+toolName+'智能体...', streamStartedAt);
                     res.write('data: '+JSON.stringify({type:'tool_start',tool:toolName})+'\n\n');
                     var toolResult = await executeToolAsync(toolName, toolArgs, projectId, req.userId);
                     console.log('[Write LLM] 工具完成: '+toolName+' '+toolResult.summary);
+                    saveStreamBuffer(projectId, toolResult.summary, '', streamStartedAt);
                     res.write('data: '+JSON.stringify({type:'tool_end',tool:toolName,summary:toolResult.summary,content:toolResult.result||''})+'\n\n');
                     toolMessages.push({ role:'tool', tool_call_id:tc.id, content:JSON.stringify(toolResult) });
                 }
