@@ -667,7 +667,7 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     var resultContent = toolResult.result ? (toolResult.result||'').substring(0, 500) : toolResult.summary;
                     saveStreamBuffer(projectId, resultContent, '✅ '+toolResult.summary, streamStartedAt, 'tool_result', actualSubAgent);
                     dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, metadata) VALUES (?,?,?,?,?)', [projectId, actualSubAgent, 'system', '✅ '+toolResult.summary, '{"type":"system"}']);
-                    res.write('data: '+JSON.stringify({type:'tool_end',tool:toolName,summary:toolResult.summary,content:toolResult.result||''})+'\n\n');
+                    res.write('data: '+JSON.stringify({type:'tool_end',tool:toolName,subAgent:actualSubAgent,summary:toolResult.summary,content:toolResult.result||''})+'\n\n');
                     toolMessages.push({ role:'tool', tool_call_id:tc.id, content:JSON.stringify(toolResult) });
                 }
             } else {
