@@ -349,7 +349,7 @@ var ORCHESTRATOR_TOOLS = [
 // 爬虫系统提示（需定义在executeToolAsync之前，crawl_books分支会引用）
 var CRAWLER_SYSTEM = '你是一个小说数据爬取分析助手。基于用户的小说创作方向，搜索并推荐同类热门网络小说作为参考。\n\n请严格按以下格式输出（必须用```json包裹）：\n```json\n{"书籍":[{"书名":"","作者":"","简介":"","热度":"","字数":"","标签":[""],"平台":"番茄/起点/晋江等"}]}\n```\n至少输出5本相关书籍。根据用户的小说类型和方向，生成真实可信的参考书籍信息。';
 
-var SKILL_OPTIMIZER_SYSTEM = '你是一个技能（Skill）优化专家。你的任务是根据用户需求，创建清晰、可执行的技能指南。\n\n技能指南格式要求：\n1. 明确说明该技能适用于什么场景\n2. 列出具体操作步骤（Step by Step）\n3. 如果涉及调用工具，必须明确指出调用哪个工具及其参数\n4. 提供注意事项和常见问题\n\n请输出完整的技能内容，用Markdown格式。';
+var SKILL_OPTIMIZER_SYSTEM = '你是一个技能（Skill）优化专家。你不仅创建技能指南，还可以为技能定义**新的可调用工具**，这些工具会被注册到调配师的工具箱中供后续调用。\n\n## 系统已有工具（不可重复定义）\n- generate_outline：生成小说分卷分章大纲\n- generate_characters：设计角色档案\n- crawl_books：爬取/搜索同类热门小说数据\n- load_skill：加载技能指南\n\n## 输出格式\n请严格输出以下JSON（不含markdown代码块标记）：\n{\n  "content": "技能指南（Markdown格式，含场景、步骤、注意事项）",\n  "tools": [\n    {\n      "name": "工具英文名（snake_case，如 design_worldview）",\n      "description": "工具用途简短描述（给AI看的，说明何时调用）",\n      "parameters": {\n        "type": "object",\n        "properties": {\n          "参数名": {"type": "参数类型", "description": "参数描述"}\n        }\n      }\n    }\n  ]\n}\n\n## 规则\n1. 如果技能的操作可以完全由已有工具完成，tools数组为空 []\n2. 如果技能需要新的操作能力（如世界观设计、战斗系统设计等），在tools中定义新工具\n3. content中的操作步骤必须明确写出调用哪个工具及其参数映射\n4. tools中的每个工具都必须有清晰的 name、description、parameters\n5. 不要输出```json标记，直接输出纯JSON';
 
 function executeToolAsync(toolName, argsJson, projectId, userId) {
     return new Promise(function(resolve) {
@@ -445,24 +445,72 @@ function executeToolAsync(toolName, argsJson, projectId, userId) {
                 console.log('[Skill] 找到技能: '+skill.name_cn);
                 resolve({ result: skill.content, summary: '已加载技能「'+skill.name_cn+'」' });
             } else {
+                // 检查是否为用户主动删除的技能（is_enabled=0）
+                var deletedSkill = queryOne('SELECT id FROM optimized_skills WHERE name_cn LIKE ? AND is_enabled=0 LIMIT 1', ['%'+skillName+'%']);
+                if (deletedSkill) {
+                    console.log('[Skill] 技能已被用户删除: '+skillName);
+                    resolve({ error: '技能已被删除', summary: '技能「'+skillName+'」已被删除，如需使用请重新创建' });
+                    return;
+                }
                 // 技能不存在 → 自动触发技能优化子智能体
                 console.log('[Skill] 技能不存在，触发技能优化: '+skillName);
-                var optContext = '请为用户创建一个名为「'+skillName+'」的技能（Skill）。该技能用于指导小说创作调配师处理与「'+skillName+'」相关的用户需求。\n- 技能名称：'+skillName+'\n- 用途：当用户要求'+skillName+'相关操作时，调配师按此技能指南执行\n- 重要：如果技能涉及生成内容（大纲、角色等），必须明确写明调用对应的generate_xxx工具\n\n请输出完整的技能内容，格式清晰、步骤明确。';
+                var optContext = '请为用户创建一个名为「'+skillName+'」的技能（Skill）。\n- 技能名称：'+skillName+'\n- 用途：当用户要求'+skillName+'相关操作时，调配师按此技能指南执行\n- 如果技能涉及已有工具能完成的操作（大纲、角色等），在content中写明调用现有工具\n- 如果技能需要新的操作能力，请在tools数组中定义新工具';
                 callOutlineLLM(projectId, userId, SKILL_OPTIMIZER_SYSTEM, optContext, 'skill_optimizer', null, function(optResult) {
                     if (optResult.error) {
                         resolve({ error: optResult.error, summary: '技能优化失败: '+optResult.error });
                         return;
                     }
-                    // 保存生成的SKILL到DB
-                    var newId = dbRun('INSERT INTO optimized_skills (user_id, name_cn, name_en, description, content, json_schema, is_enabled) VALUES (?,?,?,?,?,?,1)',
-                        [userId, skillName, '', '自动生成的技能', optResult.content||'', '', 'auto_generated']);
+                    // 解析技能优化器输出：尝试提取JSON
+                    var rawText = optResult.content || '';
+                    var skillContent = rawText; // 默认使用原始文本
+                    var toolsJson = '';
+                    var parsedTools = [];
+                    // 尝试提取JSON（可能被markdown代码块包裹）
+                    var jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
+                    var jsonStr = jsonMatch ? jsonMatch[1].trim() : rawText.trim();
+                    try {
+                        var parsed = JSON.parse(jsonStr);
+                        if (parsed.content) skillContent = parsed.content;
+                        if (parsed.tools && Array.isArray(parsed.tools)) parsedTools = parsed.tools;
+                        toolsJson = JSON.stringify(parsedTools);
+                    } catch(e) {
+                        // JSON解析失败，整个响应作为skill内容，无工具
+                        console.log('[Skill] JSON解析失败，使用原始文本作为内容');
+                    }
+                    // 保存SKILL到DB
+                    var newId = dbRun('INSERT INTO optimized_skills (user_id, name_cn, name_en, description, content, json_schema, source, is_enabled) VALUES (?,?,?,?,?,?,?,1)',
+                        [userId, skillName, '', '自动生成的技能', skillContent, toolsJson, 'auto_generated']);
+                    // 注册新工具到user_tools
+                    var toolCount = 0;
+                    parsedTools.forEach(function(t) {
+                        if (t.name && t.description) {
+                            var exists = queryOne('SELECT id FROM user_tools WHERE name=? AND user_id=?', [t.name, userId]);
+                            if (!exists) {
+                                dbRun('INSERT INTO user_tools (user_id, skill_id, name, description, parameters_json) VALUES (?,?,?,?,?)',
+                                    [userId, newId, t.name, t.description, JSON.stringify(t.parameters || {})]);
+                                toolCount++;
+                                console.log('[Tool] 注册工具: '+t.name+' for user='+userId);
+                            }
+                        }
+                    });
                     saveDB();
-                    console.log('[Skill] 技能已自动创建 id='+newId+' name='+skillName);
-                    resolve({ result: (optResult.content||''), summary: '已自动创建技能「'+skillName+'」并加载' });
+                    console.log('[Skill] 技能已创建 id='+newId+' name='+skillName+' tools='+toolCount);
+                    resolve({ result: skillContent, summary: '已自动创建技能「'+skillName+'」并加载'+(toolCount>0?'（注册了'+toolCount+'个工具）':'') });
                 });
             }
         } else {
-            resolve({ error: '未知工具: '+toolName, summary: '未知工具调用' });
+            // 动态工具：从user_tools查找并执行（以技能内容为system prompt调用LLM）
+            var userTool = queryOne('SELECT ut.*, os.content as skill_content FROM user_tools ut INNER JOIN optimized_skills os ON ut.skill_id=os.id AND os.is_enabled=1 WHERE ut.name=? AND ut.user_id=? AND ut.is_enabled=1', [toolName, userId]);
+            if (userTool) {
+                console.log('[Tool] 执行动态工具: '+toolName+' skill_id='+userTool.skill_id);
+                var toolContext = '用户请求参数：'+argsJson+'\n\n请根据技能指南执行任务并返回结果。';
+                callOutlineLLM(projectId, userId, userTool.skill_content || '', toolContext, toolName, null, function(result) {
+                    if (result.error) { resolve({ error: result.error, summary: '动态工具执行失败: '+result.error }); return; }
+                    resolve({ result: result.content, summary: '工具「'+toolName+'」执行完成' });
+                });
+            } else {
+                resolve({ error: '未知工具: '+toolName, summary: '未知工具调用' });
+            }
         }
     });
 }
@@ -547,10 +595,19 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
 
         // === MCP风格工具调用循环 ===
         var toolMessages = JSON.parse(JSON.stringify(msgs)); // 深拷贝用于工具循环
+        // 加载用户自定义工具，与默认工具合并（按账号隔离）
+        var userTools = queryAll('SELECT ut.* FROM user_tools ut INNER JOIN optimized_skills os ON ut.skill_id=os.id AND os.is_enabled=1 WHERE ut.user_id=? AND ut.is_enabled=1', [req.userId]);
+        var dynamicTools = userTools.map(function(t) {
+            var params = {};
+            try { params = JSON.parse(t.parameters_json || '{}'); } catch(e) {}
+            return { type: "function", function: { name: t.name, description: t.description, parameters: params } };
+        });
+        var allTools = ORCHESTRATOR_TOOLS.concat(dynamicTools);
+        console.log('[Write LLM] 工具总数='+allTools.length+'（默认='+ORCHESTRATOR_TOOLS.length+' 自定义='+dynamicTools.length+'）');
         var toolLoopCount = 0;
         while (toolLoopCount < 5) { // 最多5轮工具调用防无限循环
             toolLoopCount++;
-            var toolReqBody = { model:model, messages:toolMessages, tools:ORCHESTRATOR_TOOLS, temperature:0.7, stream:false };
+            var toolReqBody = { model:model, messages:toolMessages, tools:allTools, temperature:0.7, stream:false };
             console.log('[Write LLM] 工具循环轮次'+toolLoopCount+' 消息数='+toolMessages.length);
             var toolResp = await fetch(endpoint, {
                 method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
@@ -579,20 +636,37 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     // 获取子智能体的默认名（对应前端agentDefaults的type key）
                     var tl2 = toolName.toLowerCase();
                     var subAgentType = tl2.indexOf('outline')>=0?'outliner':tl2.indexOf('character')>=0?'character':tl2.indexOf('crawl')>=0?'crawler':tl2.indexOf('skill_optimizer')>=0?'skill_optimizer':tl2.indexOf('load_skill')>=0?'load_skill':toolName;
-                    console.log('[Write LLM] 执行工具: '+toolName+' → agent: '+subAgentType);
                     var platform = ''; try { platform = (tc.function.arguments && JSON.parse(tc.function.arguments).platform) || ''; } catch(e) {}
                     var skillName = ''; try { skillName = (tc.function.arguments && JSON.parse(tc.function.arguments).skill_name) || ''; } catch(e) {}
+                    // load_skill 预查：技能不存在时会触发 skill_optimizer；但用户已删除的技能不触发
+                    var actualSubAgent = subAgentType;
+                    if (subAgentType === 'load_skill' && skillName) {
+                        var existingSkill = queryOne('SELECT id, is_enabled FROM optimized_skills WHERE name_cn LIKE ? LIMIT 1', ['%'+skillName+'%']);
+                        if (!existingSkill) {
+                            // 完全不存在 → 触发skill_optimizer自动创建
+                            actualSubAgent = 'skill_optimizer';
+                        } else if (existingSkill.is_enabled === 0) {
+                            // 用户已删除 → 保持load_skill，不触发skill_optimizer
+                            console.log('[Write LLM] 技能已被用户删除: '+skillName);
+                        }
+                        // else: 技能存在且启用 → 保持load_skill
+                    }
+                    console.log('[Write LLM] 执行工具: '+toolName+' → agent: '+actualSubAgent);
                     var platformSuffix = (tl2.indexOf('crawl')>=0 && platform) ? '（平台：'+platform+'）' : '';
                     var skillSuffix = (tl2.indexOf('skill')>=0 && skillName) ? '「'+skillName+'」' : '';
-                    var inviteMsg = (tl2.indexOf('load_skill')>=0) ? '{agent:orchestrator}正在查阅技能指南'+skillSuffix : '{agent:orchestrator}调用{agent:'+subAgentType+'}智能体'+platformSuffix+skillSuffix;
-                    saveStreamBuffer(projectId, '', inviteMsg+'\n正在生成中...', streamStartedAt, 'tool_calling', subAgentType);
-                    dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, metadata) VALUES (?,?,?,?,?)', [projectId, subAgentType, 'assistant', inviteMsg, '{"type":"system"}']);
-                    res.write('data: '+JSON.stringify({type:'tool_start',tool:toolName})+'\n\n');
+                    var inviteMsg = (actualSubAgent === 'skill_optimizer')
+                        ? '{agent:orchestrator}调用{agent:skill_optimizer}智能体创建技能'+skillSuffix
+                        : (tl2.indexOf('load_skill')>=0)
+                            ? '{agent:orchestrator}正在查阅技能指南'+skillSuffix
+                            : '{agent:orchestrator}调用{agent:'+actualSubAgent+'}智能体'+platformSuffix+skillSuffix;
+                    saveStreamBuffer(projectId, '', inviteMsg+'\n正在生成中...', streamStartedAt, 'tool_calling', actualSubAgent);
+                    dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, metadata) VALUES (?,?,?,?,?)', [projectId, actualSubAgent, 'system', inviteMsg, '{"type":"system"}']);
+                    res.write('data: '+JSON.stringify({type:'tool_start',tool:toolName,subAgent:actualSubAgent})+'\n\n');
                     var toolResult = await executeToolAsync(toolName, toolArgs, projectId, req.userId);
                     console.log('[Write LLM] 工具完成: '+toolName+' '+toolResult.summary);
                     var resultContent = toolResult.result ? (toolResult.result||'').substring(0, 500) : toolResult.summary;
-                    saveStreamBuffer(projectId, resultContent, '✅ '+toolResult.summary, streamStartedAt, 'tool_result', subAgentType);
-                    dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, metadata) VALUES (?,?,?,?,?)', [projectId, subAgentType, 'assistant', '✅ '+toolResult.summary, '{"type":"system"}']);
+                    saveStreamBuffer(projectId, resultContent, '✅ '+toolResult.summary, streamStartedAt, 'tool_result', actualSubAgent);
+                    dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, metadata) VALUES (?,?,?,?,?)', [projectId, actualSubAgent, 'system', '✅ '+toolResult.summary, '{"type":"system"}']);
                     res.write('data: '+JSON.stringify({type:'tool_end',tool:toolName,summary:toolResult.summary,content:toolResult.result||''})+'\n\n');
                     toolMessages.push({ role:'tool', tool_call_id:tc.id, content:JSON.stringify(toolResult) });
                 }
@@ -1822,6 +1896,7 @@ async function start() {
     db.run('CREATE TABLE IF NOT EXISTS chapter_versions (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, chapter_id INTEGER NOT NULL, content_text TEXT DEFAULT \'\', word_count INTEGER DEFAULT 0, save_type TEXT DEFAULT \'manual\', label TEXT DEFAULT \'\', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
     db.run('CREATE TABLE IF NOT EXISTS writing_quality_ratings (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, chapter_id INTEGER, user_rating INTEGER, edit_distance_ratio REAL, ai_similarity_score REAL, agent_id INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
     db.run('CREATE TABLE IF NOT EXISTS optimized_skills (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name_cn TEXT NOT NULL, name_en TEXT DEFAULT \'\', description TEXT DEFAULT \'\', content TEXT NOT NULL, json_schema TEXT DEFAULT \'\', source TEXT DEFAULT \'auto_generated\', is_enabled INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
+    db.run('CREATE TABLE IF NOT EXISTS user_tools (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, skill_id INTEGER, name TEXT NOT NULL, description TEXT DEFAULT \'\', parameters_json TEXT DEFAULT \'{}\', is_enabled INTEGER DEFAULT 1, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');
 
 // ==================== 爬虫Agent ====================
 
@@ -2027,7 +2102,7 @@ app.post('/api/writing-projects/:id/switch-branch', auth, (req, res) => {
 // GET 列出用户的优化技能
 app.get('/api/writing-projects/:id/skills', auth, (req, res) => {
     try {
-        var skills = queryAll('SELECT * FROM optimized_skills WHERE user_id=? ORDER BY updated_at DESC', [req.userId]);
+        var skills = queryAll('SELECT * FROM optimized_skills WHERE user_id=? AND is_enabled=1 ORDER BY updated_at DESC', [req.userId]);
         res.json(skills || []);
     } catch(e) { console.error('[Skill] GET skills error:', e); res.status(500).json({ error: e.message }); }
 });
@@ -2067,13 +2142,15 @@ app.put('/api/writing-projects/:id/skills/:sid', auth, (req, res) => {
     } catch(e) { console.error('[Skill] PUT skill error:', e); res.status(500).json({ error: e.message }); }
 });
 
-// DELETE 删除技能
+// DELETE 删除技能（软删除：设为禁用 + 级联禁用关联工具）
 app.delete('/api/writing-projects/:id/skills/:sid', auth, (req, res) => {
     try {
         var sid = parseInt(req.params.sid);
-        dbRun('DELETE FROM optimized_skills WHERE id=? AND user_id=?', [sid, req.userId]);
-        saveDB();
-        console.log('[Skill] 删除技能 id='+sid);
+        // 软删除：禁用技能而非物理删除，防止调配师重复创建
+        dbRun('UPDATE optimized_skills SET is_enabled=0, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?', [sid, req.userId]);
+        // 级联禁用关联的动态工具
+        dbRun('UPDATE user_tools SET is_enabled=0, updated_at=CURRENT_TIMESTAMP WHERE skill_id=? AND user_id=?', [sid, req.userId]);
+        console.log('[Skill] 软删除技能 id='+sid+'（已级联禁用关联工具）');
         res.json({ ok: true });
     } catch(e) { console.error('[Skill] DELETE skill error:', e); res.status(500).json({ error: e.message }); }
 });
@@ -2090,6 +2167,42 @@ app.post('/api/writing-projects/:id/toggle-skill/:sid', auth, (req, res) => {
         console.log('[Skill] 切换技能 id='+sid+' enabled='+newVal);
         res.json({ ok: true, is_enabled: !!newVal });
     } catch(e) { console.error('[Skill] Toggle skill error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// ==================== 用户工具管理（动态注册） ====================
+// GET 获取用户的所有动态工具
+app.get('/api/writing-projects/:id/tools', auth, (req, res) => {
+    try {
+        var tools = queryAll('SELECT ut.*, os.name_cn as skill_name FROM user_tools ut LEFT JOIN optimized_skills os ON ut.skill_id=os.id WHERE ut.user_id=? ORDER BY ut.updated_at DESC', [req.userId]);
+        res.json(tools || []);
+    } catch(e) { console.error('[Tool] GET tools error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// PUT 更新工具
+app.put('/api/writing-projects/:id/tools/:tid', auth, (req, res) => {
+    try {
+        var tid = parseInt(req.params.tid);
+        var tool = queryOne('SELECT * FROM user_tools WHERE id=? AND user_id=?', [tid, req.userId]);
+        if (!tool) return res.status(404).json({ error: '工具不存在' });
+        var { name, description, parameters_json, is_enabled } = req.body;
+        var sets = [], params = [];
+        if (name !== undefined) { sets.push('name=?'); params.push(name); }
+        if (description !== undefined) { sets.push('description=?'); params.push(description); }
+        if (parameters_json !== undefined) { sets.push('parameters_json=?'); params.push(parameters_json); }
+        if (is_enabled !== undefined) { sets.push('is_enabled=?'); params.push(is_enabled ? 1 : 0); }
+        if (sets.length) { sets.push('updated_at=CURRENT_TIMESTAMP'); params.push(tid); dbRun('UPDATE user_tools SET '+sets.join(',')+' WHERE id=?', params); saveDB(); }
+        res.json({ ok: true });
+    } catch(e) { console.error('[Tool] PUT tool error:', e); res.status(500).json({ error: e.message }); }
+});
+
+// DELETE 删除工具
+app.delete('/api/writing-projects/:id/tools/:tid', auth, (req, res) => {
+    try {
+        var tid = parseInt(req.params.tid);
+        dbRun('DELETE FROM user_tools WHERE id=? AND user_id=?', [tid, req.userId]);
+        saveDB();
+        res.json({ ok: true });
+    } catch(e) { console.error('[Tool] DELETE tool error:', e); res.status(500).json({ error: e.message }); }
 });
 
 // ==================== Agent API 配置 ====================

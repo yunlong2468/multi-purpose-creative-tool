@@ -958,7 +958,8 @@ function _resolveToolAgent(toolName) {
   if (lower.indexOf('character') >= 0) return 'character';
   if (lower.indexOf('crawl') >= 0) return 'crawler';
   if (lower.indexOf('skill_optimizer') >= 0) return 'skill_optimizer';
-  if (lower.indexOf('load_skill') >= 0 || lower.indexOf('skill') >= 0) return 'load_skill';
+  if (lower.indexOf('load_skill') >= 0) return 'load_skill';
+  // 动态工具：返回工具名本身作为agent类型
   return toolName;
 }
 
@@ -1770,12 +1771,12 @@ async function doStreamingCall(text) {
             finalizeStreamingMsg(evt);
           } else if (evt.type === 'tool_start') {
             // 调配师调用子智能体 → 显示系统消息 + 子智能体气泡 + 启动短语轮播
-            var toolAgentType = _resolveToolAgent(evt.tool);
+            var toolAgentType = evt.subAgent || _resolveToolAgent(evt.tool);
             var toolLabel = getAgentName(toolAgentType);
             var inviteMsg = {type:'system',content:getAgentName('orchestrator')+' 调用 '+toolLabel+' 智能体',time:Date.now()};
             agentMsgs.push(inviteMsg);
             if (ensureMsgInner()) appendMsgToDOM(renderSingleMsg(inviteMsg));
-            // load_skill 不需要子智能体气泡，只显示系统消息
+            // load_skill 不需要子智能体气泡（服务端指定了 subAgent 的除外）
             if (toolAgentType === 'load_skill') {
               _updateOnlineCount();
               pendingAgent = null;
@@ -1787,7 +1788,7 @@ async function doStreamingCall(text) {
             }
           } else if (evt.type === 'tool_end') {
             _stopPhraseRotation();
-            var toolAgentType = _resolveToolAgent(evt.tool);
+            var toolAgentType = evt.subAgent || _resolveToolAgent(evt.tool);
             // load_skill直接展示为系统消息
             if (toolAgentType === 'load_skill') {
               var skillMsg = {type:'system',content:evt.summary||'技能已加载',time:Date.now()};
@@ -1822,10 +1823,11 @@ async function doStreamingCall(text) {
               agentMsgs.push(leaveMsg2);
               if (ensureMsgInner()) appendMsgToDOM(renderSingleMsg(leaveMsg2));
             }
-            // 刷大纲/角色面板
+            // 刷大纲/角色/SKILL面板
             var agentType = _resolveToolAgent(evt.tool);
             if (agentType === 'outliner') { setTimeout(function(){loadOutline();}, 500); }
             if (agentType === 'character') { setTimeout(function(){loadCharacters();}, 500); }
+            if (agentType === 'load_skill' || agentType === 'skill_optimizer') { setTimeout(function(){SKILL.load();}, 500); }
           } else if (evt.type === 'error') {
             if (streamConnTimeout) { clearTimeout(streamConnTimeout); streamConnTimeout = null; }
             var errMsg = { type: 'system', content: '⚠️ '+evt.message, time: Date.now() };
