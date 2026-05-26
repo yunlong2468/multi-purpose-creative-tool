@@ -26,7 +26,7 @@ var PANEL_META = {
   outline:    { icon:'📖', label:'大纲' },
   chat:       { icon:'💬', label:'对话' },
   skillConfig:{ icon:'🧠', label:'Skill配置' },
-  apiConfig:  { icon:'⚙️', label:'API配置' },
+  apiConfig:  { icon:'👾', label:'API配置' },
 };
 
 // 查找某个 fixed tab 所在的 pane
@@ -720,7 +720,7 @@ var RENDER = {
   },
 
   apiConfig: function(container) {
-    container.innerHTML = '<div class="ac-header">⚙️ Agent API 配置</div><div class="ac-body" id="acBody"><div class="sk-empty">加载中...</div></div>';
+    container.innerHTML = '<div class="ac-header">👾 Agent API 配置</div><div class="ac-body" id="acBody"><div class="sk-empty">加载中...</div></div>';
     APICFG.load();
   }
 };
