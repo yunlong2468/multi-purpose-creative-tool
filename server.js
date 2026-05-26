@@ -21,8 +21,8 @@ if (!fs.existsSync(BUFFER_DIR)) fs.mkdirSync(BUFFER_DIR, { recursive: true });
 
 // 流式输出磁盘缓冲（断线续传用）
 function streamBufferPath(projectId) { return path.join(BUFFER_DIR, 'stream_'+projectId+'.json'); }
-function saveStreamBuffer(projectId, content, thinking, startedAt, phase, agentType) {
-    try { fs.writeFileSync(streamBufferPath(projectId), JSON.stringify({content:content, thinking:thinking, startedAt:startedAt, updatedAt:Date.now(), phase:phase||'streaming', agentType:agentType||'orchestrator'})); } catch(e) {}
+function saveStreamBuffer(projectId, content, thinking, startedAt, phase, agentType, subContent, subThinking) {
+    try { fs.writeFileSync(streamBufferPath(projectId), JSON.stringify({content:content, thinking:thinking, startedAt:startedAt, updatedAt:Date.now(), phase:phase||'streaming', agentType:agentType||'orchestrator', subContent:subContent||'', subThinking:subThinking||''})); } catch(e) {}
 }
 function clearStreamBuffer(projectId) {
     try { if (fs.existsSync(streamBufferPath(projectId))) fs.unlinkSync(streamBufferPath(projectId)); } catch(e) {}
@@ -826,7 +826,11 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, metadata) VALUES (?,?,?,?,?)', [projectId, actualSubAgent, 'system', inviteMsg, '{"type":"system"}']);
                     res.write('data: '+JSON.stringify({type:'tool_start',tool:toolName,subAgent:actualSubAgent})+'\n\n');
                     // 创建流式回调：子智能体的思考/正文实时推送到前端
+                    var _subC = '', _subT = '';
                     var streamCallback = function(delta) {
+                        if (delta.type === 'thinking') _subT += delta.delta;
+                        if (delta.type === 'content') _subC += delta.delta;
+                        saveStreamBuffer(projectId, _subC.substring(0,500), '', streamStartedAt, 'tool_calling', actualSubAgent, _subC, _subT);
                         try { res.write('data: '+JSON.stringify({type:'tool_stream',tool:toolName,subAgent:actualSubAgent,phase:delta.type,delta:delta.delta})+'\n\n'); } catch(e) {}
                     };
                     var toolResult = await executeToolAsync(toolName, toolArgs, projectId, req.userId, streamCallback);
@@ -851,8 +855,11 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                         // 将工具结果注入子智能体会话
                         var toolResultMsg = { role: 'tool', tool_call_id: reqTc.id, content: JSON.stringify(reqResult) };
                         subAgentMsgs.push(toolResultMsg);
-                        // 继续子智能体LLM（续接模式）
+                        // 继续子智能体LLM（续接模式），累积写缓冲
                         streamCallback = function(delta) {
+                            if (delta.type === 'thinking') _subT += delta.delta;
+                            if (delta.type === 'content') _subC += delta.delta;
+                            saveStreamBuffer(projectId, _subC.substring(0,500), '', streamStartedAt, 'tool_calling', actualSubAgent, _subC, _subT);
                             try { res.write('data: '+JSON.stringify({type:'tool_stream',tool:toolName,subAgent:actualSubAgent,phase:delta.type,delta:delta.delta})+'\n\n'); } catch(e) {}
                         };
                         toolResult = await executeToolAsync(toolName, toolArgs, projectId, req.userId, streamCallback, subAgentMsgs);
@@ -865,7 +872,7 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     toolResult.result = _accContent;
                     toolResult.thinking = _accThinking;
                     var resultContent = toolResult.result ? (toolResult.result||'').substring(0, 500) : toolResult.summary;
-                    saveStreamBuffer(projectId, resultContent, '✅ '+toolResult.summary, streamStartedAt, 'tool_result', actualSubAgent);
+                    saveStreamBuffer(projectId, resultContent, '✅ '+toolResult.summary, streamStartedAt, 'tool_result', actualSubAgent, toolResult.result||'', toolResult.thinking||'');
                     dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, metadata) VALUES (?,?,?,?,?)', [projectId, actualSubAgent, 'system', '✅ '+toolResult.summary, '{"type":"system"}']);
                     res.write('data: '+JSON.stringify({type:'tool_end',tool:toolName,subAgent:actualSubAgent,summary:toolResult.summary,content:toolResult.result||'',thinking:toolResult.thinking||''})+'\n\n');
                     toolMessages.push({ role:'tool', tool_call_id:tc.id, content:JSON.stringify(toolResult) });

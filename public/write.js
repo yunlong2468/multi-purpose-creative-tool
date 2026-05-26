@@ -1965,6 +1965,7 @@ async function doStreamingCall(text) {
             finalizeStreamingMsg(evt);
           } else if (evt.type === 'tool_start') {
             // 调配师调用子智能体 → 显示系统消息 + 子智能体气泡 + 启动短语轮播
+            _subAccumThinking = ''; // 重置思维链累积
             var toolAgentType = evt.subAgent || _resolveToolAgent(evt.tool);
             var toolLabel = getAgentName(toolAgentType);
             var inviteMsg = {type:'system',content:getAgentName('orchestrator')+' 调用 '+toolLabel+' 智能体',time:Date.now()};
@@ -1985,12 +1986,25 @@ async function doStreamingCall(text) {
             var tsAgent = evt.subAgent || _resolveToolAgent(evt.tool);
             if (!_toolStreamEl || _toolStreamAgent !== tsAgent) _ensureToolBubble(tsAgent);
             if (evt.phase === 'thinking') {
-              var tThink = _toolStreamEl ? _toolStreamEl.querySelector('.stream-think-body') : null;
-              if (tThink) { tThink.insertAdjacentHTML('beforeend', escHtml(evt.delta||'').replace(/\n/g,'<br>')); tThink.scrollTop = tThink.scrollHeight; }
+              // 思维链静默累积，不写DOM。牛马碎碎念继续轮播
+              _subAccumThinking += evt.delta||'';
             } else if (evt.phase === 'content') {
               _stopPhraseRotation();
+              // 第一帧正文：将累积的思维链一次性写入DOM
+              if (_subAccumThinking && _toolStreamEl) {
+                var _tThink = _toolStreamEl.querySelector('.stream-think-body');
+                if (_tThink) { _tThink.innerHTML = escHtml(_subAccumThinking).replace(/\n/g,'<br>'); _tThink.scrollTop = _tThink.scrollHeight; }
+                var _tLabel = _toolStreamEl.querySelector('.toggle-label');
+                if (_tLabel) _tLabel.textContent = '💭 思考过程';
+                _subAccumThinking = ''; // 已写入，清空
+              }
               var tCont = _toolStreamEl ? _toolStreamEl.querySelector('.stream-content') : null;
-              if (tCont) { tCont.style.display = ''; tCont.insertAdjacentHTML('beforeend', escHtml(evt.delta||'').replace(/\n/g,'<br>')); tCont.scrollTop = tCont.scrollHeight; }
+              if (tCont) {
+                tCont.style.display = '';
+                var fd = escHtml(evt.delta||'').replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
+                tCont.insertAdjacentHTML('beforeend', fd);
+                tCont.scrollTop = tCont.scrollHeight;
+              }
             }
             scrollToBottomIfAtBottom();
           } else if (evt.type === 'tool_request') {
@@ -2011,6 +2025,12 @@ async function doStreamingCall(text) {
               if (ensureMsgInner()) appendMsgToDOM(renderSingleMsg(skillMsg));
               _updateOnlineCount();
             } else if (_toolStreamEl) {
+              // 如果思维链累积了但从未写入DOM（正文未生成），现在写入
+              if (_subAccumThinking) {
+                var _tThink2 = _toolStreamEl.querySelector('.stream-think-body');
+                if (_tThink2) { _tThink2.innerHTML = escHtml(_subAccumThinking).replace(/\n/g,'<br>'); }
+                _subAccumThinking = '';
+              }
               // 保留流式累积的thinking/content，只更新标签状态
               var tLabel = _toolStreamEl.querySelector('.toggle-label');
               if (tLabel && evt.thinking) {
@@ -2018,10 +2038,10 @@ async function doStreamingCall(text) {
               } else if (tLabel) {
                 tLabel.textContent = '💭 结果摘要';
               }
-              // 确保内容区可见（流式阶段可能未触发content事件）
+              // 内容区全量格式化渲染（表格/代码块等复杂Markdown）
               if (evt.content) {
                 var tContent = _toolStreamEl.querySelector('.stream-content');
-                if (tContent) tContent.style.display = '';
+                if (tContent) { tContent.style.display = ''; tContent.innerHTML = formatAgentContent(evt.content); }
               }
               // 追加结果消息到agentMsgs并持久化到DB
               var toolMsg = {type:'chat',role:'assistant',agent:toolAgentType,content:evt.content||'',thinking:evt.thinking||'',time:Date.now()};
@@ -2501,10 +2521,11 @@ function _deleteVersion(verId) {
 // ===== 断线续传：轮询磁盘缓冲 =====
 var _bufPollTimer = null, _bufActive = false, _bufStartedAt = 0, _currentStreamAgent = null;
 var _toolStreamEl = null, _toolStreamAgent = null, _toolSysPhase = ''; // 子智能体气泡跟踪 + 系统消息防刷
+var _subAccumThinking = ''; // 子智能体思维链累积（content首帧前不写DOM）
 
 function pollStreamBuffer() {
   api('GET', '/writing-projects/'+projectId+'/stream-buffer?_t='+Date.now()).then(function(buf) {
-    if (!buf || (!buf.content && !buf.thinking)) { console.log("[Poll] 缓冲为空 _bufActive="+_bufActive+" msgs="+agentMsgs.length);
+    if (!buf || (!buf.content && !buf.thinking && buf.phase !== 'tool_calling' && buf.phase !== 'tool_result')) { console.log("[Poll] 缓冲为空 _bufActive="+_bufActive+" msgs="+agentMsgs.length);
       if (_bufActive) {
         // 之前活跃→现在空了→流式结束，加载最终DB历史
         _bufActive = false; _currentStreamAgent = null;
@@ -2556,7 +2577,19 @@ function pollStreamBuffer() {
       for (var _lj = _lastUserIdx + 1; _lj < agentMsgs.length; _lj++) { if (agentMsgs[_lj].agent === agentType && agentMsgs[_lj].role === 'assistant') { _hasReply = true; break; } }
       if (!_hasReply) {
         _ensureToolBubble(agentType);
-        _startPhraseRotation();
+        // 仅正文存在时才恢复（思维链未完成时不显示，碎碎念继续播）
+        if (buf.subContent && _toolStreamEl) {
+          if (buf.subThinking) {
+            var _tBody = _toolStreamEl.querySelector('.stream-think-body');
+            if (_tBody) { _tBody.innerHTML = escHtml(replaceAgentPlaceholders(buf.subThinking)).replace(/\n/g,'<br>'); }
+            var _tLabel = _toolStreamEl.querySelector('.toggle-label');
+            if (_tLabel) _tLabel.textContent = '💭 思考过程';
+          }
+          var _tCont = _toolStreamEl.querySelector('.stream-content');
+          if (_tCont) { _tCont.style.display = ''; _tCont.innerHTML = formatAgentContent(replaceAgentPlaceholders(buf.subContent)); }
+        } else {
+          _startPhraseRotation();
+        }
       }
       _bufPollTimer = setTimeout(pollStreamBuffer, 2000);
       return;
@@ -2573,15 +2606,26 @@ function pollStreamBuffer() {
       for (var _ll = _lu2 + 1; _ll < agentMsgs.length; _ll++) { if (agentMsgs[_ll].agent === agentType && agentMsgs[_ll].role === 'assistant') { _hr2 = true; break; } }
       if (!_hr2) _ensureToolBubble(agentType);
       _stopPhraseRotation();
-      // 工具结果摘要只显示在子智能体气泡中
-      if (buf.thinking && _toolStreamEl) {
+      // 恢复子智能体思维链（缓冲中的完整内容）
+      if (buf.subThinking && _toolStreamEl) {
+        var tBody2 = _toolStreamEl.querySelector('.stream-think-body');
+        if (tBody2) tBody2.innerHTML = escHtml(replaceAgentPlaceholders(buf.subThinking)).replace(/\n/g,'<br>');
+        var tLabel = _toolStreamEl.querySelector('.toggle-label');
+        if (tLabel) tLabel.textContent = '💭 思考过程';
+      } else if (buf.thinking && _toolStreamEl) {
         var tBody2 = _toolStreamEl.querySelector('.stream-think-body');
         if (tBody2) tBody2.innerHTML = escHtml(replaceAgentPlaceholders(buf.thinking));
         var tLabel = _toolStreamEl.querySelector('.toggle-label');
         if (tLabel) tLabel.textContent = '💭 结果摘要';
       }
-      // 显示工具结果内容
-      if (buf.content && _toolStreamEl) {
+      // 恢复子智能体正文
+      if (buf.subContent && _toolStreamEl) {
+        var tContent = _toolStreamEl.querySelector('.stream-content');
+        if (tContent) {
+          tContent.style.display = '';
+          tContent.innerHTML = formatAgentContent(replaceAgentPlaceholders(buf.subContent));
+        }
+      } else if (buf.content && _toolStreamEl) {
         var tContent = _toolStreamEl.querySelector('.stream-content');
         if (tContent) {
           tContent.style.display = '';
