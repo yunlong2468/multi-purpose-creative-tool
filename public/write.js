@@ -2519,12 +2519,14 @@ function _deleteVersion(verId) {
 }
 
 // ===== 断线续传：轮询磁盘缓冲 =====
-var _bufPollTimer = null, _bufActive = false, _bufStartedAt = 0, _currentStreamAgent = null;
+var _bufPollTimer = null, _bufActive = false, _bufStopped = false, _bufStartedAt = 0, _currentStreamAgent = null;
 var _toolStreamEl = null, _toolStreamAgent = null, _toolSysPhase = ''; // 子智能体气泡跟踪 + 系统消息防刷
 var _subAccumThinking = ''; // 子智能体思维链累积（content首帧前不写DOM）
 
 function pollStreamBuffer() {
+  if (_bufStopped) return;
   api('GET', '/writing-projects/'+projectId+'/stream-buffer?_t='+Date.now()).then(function(buf) {
+    if (_bufStopped) return; // 在途请求：SSE会话已接管，停止干扰
     if (!buf || (!buf.content && !buf.thinking && buf.phase !== 'tool_calling' && buf.phase !== 'tool_result')) { console.log("[Poll] 缓冲为空 _bufActive="+_bufActive+" msgs="+agentMsgs.length);
       if (_bufActive) {
         // 之前活跃→现在空了→流式结束，加载最终DB历史
@@ -2890,6 +2892,7 @@ function reloadHistoryFromDB() { console.log("[Reload] 从DB加载历史...");
 }
 
 function stopBufferPolling() {
+  _bufStopped = true;
   if (_bufPollTimer) { clearTimeout(_bufPollTimer); _bufPollTimer = null; }
 }
 

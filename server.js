@@ -284,20 +284,29 @@ app.post('/api/writing-projects/:id/undo-last', auth, (req, res) => {
         if (!lastUser) return res.json({ ok: true, deleted: 0 });
         // 找到上一条用户消息的时间戳作为安全点
         var safePoint = queryOne('SELECT created_at FROM agent_conversations WHERE project_id=? AND role=? AND id < ? ORDER BY id DESC LIMIT 1', [projectId, 'user', lastUser.id]);
-        var safeTime = safePoint ? safePoint.created_at : lastUser.created_at;
+        // 以被撤回消息自身的时间戳为边界，确保只回滚本轮产生的文件数据
+        var safeTime = lastUser.created_at;
         // 删除对话记录
         db.run('DELETE FROM agent_conversations WHERE project_id=? AND id>=?', [projectId, lastUser.id]);
         // 回滚文件数据
         var rollback = { volumes: 0, chapters: 0, characters: 0 };
         if (safePoint) {
             // 删前捕获：哪些卷会被波及（在删章之前查询）
-            var affectedVolIds = queryAll('SELECT DISTINCT volume_id FROM writing_chapters WHERE project_id=? AND created_at > ?', [projectId, safeTime]);
-            // 统计并删除安全点之后创建的章和角色
-            rollback.chapters = (queryAll('SELECT id FROM writing_chapters WHERE project_id=? AND created_at > ?', [projectId, safeTime])).length;
-            rollback.characters = (queryAll('SELECT id FROM writing_characters WHERE project_id=? AND created_at > ?', [projectId, safeTime])).length;
-            db.run('DELETE FROM chapter_versions WHERE project_id=? AND created_at > ?', [projectId, safeTime]);
-            db.run('DELETE FROM writing_chapters WHERE project_id=? AND created_at > ?', [projectId, safeTime]);
-            db.run('DELETE FROM writing_characters WHERE project_id=? AND created_at > ?', [projectId, safeTime]);
+            var affectedVolIds = queryAll('SELECT DISTINCT volume_id FROM writing_chapters WHERE project_id=? AND created_at >= ?', [projectId, safeTime]);
+            // 统计并删除本轮消息之后创建的章和角色（>= 避免秒级精度丢失）
+            rollback.chapters = (queryAll('SELECT id FROM writing_chapters WHERE project_id=? AND created_at >= ?', [projectId, safeTime])).length;
+            // 删前捕获待删除角色ID，用于清理关联表
+            var deletedChars = queryAll('SELECT id FROM writing_characters WHERE project_id=? AND created_at >= ?', [projectId, safeTime]);
+            rollback.characters = deletedChars.length;
+            if (deletedChars.length > 0) {
+                var charIds = deletedChars.map(function(c) { return c.id; });
+                var placeholders = charIds.map(function() { return '?'; }).join(',');
+                db.run('DELETE FROM character_memories WHERE project_id=? AND character_id IN ('+placeholders+')', [projectId].concat(charIds));
+                db.run('DELETE FROM relationship_edges WHERE project_id=? AND (from_character_id IN ('+placeholders+') OR to_character_id IN ('+placeholders+'))', [projectId].concat(charIds).concat(charIds));
+            }
+            db.run('DELETE FROM chapter_versions WHERE project_id=? AND created_at >= ?', [projectId, safeTime]);
+            db.run('DELETE FROM writing_chapters WHERE project_id=? AND created_at >= ?', [projectId, safeTime]);
+            db.run('DELETE FROM writing_characters WHERE project_id=? AND created_at >= ?', [projectId, safeTime]);
             // 仅清理波及范围内变为空的卷
             affectedVolIds.forEach(function(vr) {
                 var remain = queryOne('SELECT COUNT(*) as cnt FROM writing_chapters WHERE volume_id=?', [vr.volume_id]);
@@ -622,21 +631,42 @@ function executeToolAsync(toolName, argsJson, projectId, userId, streamCallback,
             callOutlineLLM(projectId, userId, CHARACTER_SYSTEM, context2, 'character', null, function(result) {
                 if (result.error) { resolve({ error: result.error, summary: '角色生成失败: '+result.error }); return; }
                 var summary = '角色已生成';
+                var raw = (result.content || '');
                 try {
-                    var raw = result.content || '';
+                    var jsonStr = '';
+                    // 策略1: markdown 代码块提取
                     var m = raw.match(/```json\s*([\s\S]*?)```/);
-                    var jsonStr = m ? m[1].trim() : raw.trim();
-                    var start = jsonStr.indexOf('{'), end = jsonStr.lastIndexOf('}');
-                    if (start >= 0 && end > start) jsonStr = jsonStr.substring(start, end + 1);
-                    var chars = JSON.parse(jsonStr);
-                    if (chars && chars['角色']) {
+                    if (m) { jsonStr = m[1].trim(); }
+                    // 策略2: 直接从 {...} 边界截取（兼容非代码块输出）
+                    if (!jsonStr) {
+                        var idx1 = raw.indexOf('{'), idx2 = raw.lastIndexOf('}');
+                        if (idx1 >= 0 && idx2 > idx1) jsonStr = raw.substring(idx1, idx2 + 1);
+                    }
+                    if (!jsonStr) { throw new Error('LLM输出中未找到有效JSON结构'); }
+                    // 解析 + 修复常见JSON格式问题
+                    var chars = null;
+                    try {
+                        chars = JSON.parse(jsonStr);
+                    } catch(parseErr) {
+                        // 尝试修复: 删除尾随逗号（LLM生成JSON时的常见错误）
+                        var repaired = jsonStr.replace(/,\s*([}\]])/g, '$1');
+                        console.log('[Writing 角色] 首次解析失败，已自动修复尾随逗号并重试');
+                        chars = JSON.parse(repaired);
+                    }
+                    if (chars && chars['角色'] && Array.isArray(chars['角色']) && chars['角色'].length > 0) {
                         chars['角色'].forEach(function(c) {
                             dbRun('INSERT INTO writing_characters (project_id, name, profile_json) VALUES (?,?,?)', [projectId, c['姓名']||'未命名', JSON.stringify(c)]);
                         });
                         saveDB();
                         summary = '已生成 '+chars['角色'].length+' 个角色';
+                    } else if (chars && chars['角色'] && !Array.isArray(chars['角色'])) {
+                        summary = '角色已生成但"角色"字段不是数组，请检查LLM输出格式';
+                        console.warn('[Writing 角色] 角色字段非数组，类型:', typeof chars['角色']);
+                    } else {
+                        summary = '角色已生成但缺少"角色"字段，请检查LLM输出格式';
+                        console.warn('[Writing 角色] 缺少角色字段，可用keys:', chars ? Object.keys(chars).join(',') : 'null');
                     }
-                } catch(e) { console.error('[Writing 角色] 保存失败:', e.message); summary = '角色保存失败: '+e.message; }
+                } catch(e) { console.error('[Writing 角色] 保存失败:', e.message, 'raw前200字:', raw.substring(0, 200)); summary = '角色保存失败: '+e.message; }
                 resolve({ result: result.content, thinking: result.thinking || '', summary: summary });
             }, streamCallback);
         } else if (tl.indexOf('crawl') >= 0 || toolName === 'crawl_books') {
@@ -694,7 +724,6 @@ function executeToolAsync(toolName, argsJson, projectId, userId, streamCallback,
                     resolve({ error: crawlResult.error, summary: '爬取失败：无法访问【'+platform+'】网站，请更换平台或稍后重试' });
                 }
             });
-        } else if (tl.indexOf('load_skill') >= 0 || tl.indexOf('skill') >= 0) {
         } else if (tl.indexOf('load_skill') >= 0 || tl.indexOf('skill') >= 0) {
             var skillName = args.skill_name || '';
             console.log('[Skill] 查询技能: '+skillName);
