@@ -6,14 +6,14 @@
 
 | 层 | 技术 |
 |---|------|
-| 后端 | Node.js + Express |
-| 数据库 | SQL.js (SQLite 内存/文件) |
-| 前端 | 原生 HTML/CSS/JS (DOM 无限画布) |
+| 后端 | Node.js + Express (~3000行) |
+| 数据库 | SQL.js (SQLite 文件持久化) |
+| 前端 | 原生 HTML/CSS/JS (~4000行) |
 | 认证 | JWT + session_token 多设备互踢 |
-| 实时 | SSE (Server-Sent Events) |
-| LLM | OpenAI 兼容 API (分镜生成 + 图片生成) |
-| 爬虫 | Python 3.10+ Scrapling（桥接 Node.js，可选降级） |
-| 代码量 | ~5500 行 |
+| 实时 | SSE (Server-Sent Events) 流式推送 |
+| LLM | OpenAI 兼容 API (DeepSeek/OpenAI/自定义) |
+| 爬虫 | Python 3.10+ Scrapling + Playwright CDP + fontTools字形解码 |
+| 多智能体 | 编排器 + 大纲/角色/爬虫/技能优化子智能体 + 动态工具 |
 
 ## 快速开始（零基础也能上手）
 
@@ -101,7 +101,9 @@ node server.js
 本机访问: http://localhost:3001
 ```
 
-### 第五步：打开画布
+> **关闭服务**：在命令提示符窗口按 `Ctrl+C`，下次使用重复本步即可。
+
+### 第六步：打开画布
 
 浏览器访问 **http://localhost:3001**，注册账号即可开始使用。
 
@@ -182,6 +184,29 @@ node server.js
 - [x] 启动日志显示局域网 IP
 - [x] `JWT_SECRET` 支持环境变量覆盖
 
+### 写作模块（AI 辅助小说创作）
+- [x] 多智能体协作：调配师 + 大纲师 + 角色设计 + 爬虫 + 动态技能工具
+- [x] 分卷分章大纲生成与管理
+- [x] 角色档案自动生成（LLM JSON 提取 + DB 持久化）
+- [x] 角色关系图谱 + 伏笔追踪
+- [x] 章节编辑器（自动保存 + 版本快照）
+- [x] 智能体流式对话 + 思考计时器 + 牛马碎碎念轮播
+- [x] 平台小说爬取（番茄/起点/晋江/纵横等 11 个平台）
+- [x] Scrapling CDP 浏览器自动化（绕过字节跳动反爬 SDK）
+- [x] PUA 自定义字体字形解码（破解字体反爬乱码）
+- [x] 人机验证码浮动通知 + 自动等待
+- [x] 撤销恢复（撤回对话同步回滚章/卷/角色）
+- [x] LLM 多轮工具调用 + 子智能体 request_tool 递归
+
+### 爬虫架构（三级降级）
+
+```
+平台请求
+  ├─ CDP 模式（番茄等强反爬）→ 真实Chrome → page.content() → 字形解码
+  ├─ Scrapling 桥接（HTTP TLS伪装）→ Python Fetcher → HTML
+  └─ 原生 Node.js fetch（兜底）→ 标准HTTP请求
+```
+
 ---
 
 ## 开发计划
@@ -214,7 +239,11 @@ node server.js
 |------|------|------|
 | 插件系统 | 第三方插件扩展 | ⬜ |
 | AI 辅助分镜 | LLM 从文字剧本直接生成分镜脚本 | ⬜ |
-| 角色库 | 角色设定集中管理，自动匹配生图 | ⬜ |
+| 角色库 | 角色设定集中管理，自动匹配生图 | ✅ |
+| 小说爬虫 | 多平台热门书籍爬取参考 | ✅ |
+| 多智能体写作 | 编排器+子智能体协同创作 | ✅ |
+| CDP 浏览器自动化 | 绕过强反爬网站保护 | ✅ |
+| 字体反爬解码 | 字形比对破解PUA乱码 | ✅ |
 | 移动端适配 | 响应式布局，平板可用 | ⬜ |
 | 外部工具对接 | AE/PR/ComfyUI 工作流集成 | ⬜ |
 
@@ -224,15 +253,17 @@ node server.js
 
 ```
 新-无限画布本地部署/
-├── server.js              # Express 后端 (~5500行)
+├── server.js              # Express 后端 (~6000行)
 ├── package.json           # Node.js 依赖声明
-├── requirements.txt       # Python 依赖声明（爬虫桥接）
+├── requirements.txt       # Python 依赖声明（Scrapling爬虫）
 ├── setup.bat              # Windows 一键环境安装脚本
-├── scraper_bridge.py      # Python Scrapling → Node.js 桥接
+├── chrome_debug.bat       # Chrome CDP调试模式启动器
+├── scraper_bridge.py      # Scrapling → Node.js 爬虫桥接
+├── glyph_decoder.py       # PUA字体字形解码器（破解反爬乱码）
 ├── public/
 │   ├── canvas.html        # 画布主页面
-│   ├── write.html         # 写作页面
-│   ├── write.js           # 写作前端逻辑
+│   ├── write.html         # 写作页面（多智能体聊天）
+│   ├── write.js           # 写作前端逻辑 (~2800行)
 │   ├── projects.html      # 项目列表
 │   ├── agents.html        # 智能体管理
 │   ├── settings.html      # 生图 API 设置
@@ -241,8 +272,6 @@ node server.js
 │   └── storyboard-keyframe-generator/
 │       ├── SKILL.md       # 分镜关键帧生成提示词规范
 │       └── references/
-│           ├── 分镜关键帧提示词.json
-│           └── image_gen.py
 ├── uploads/               # 上传文件（gitignore）
 └── data.db                # SQLite 数据库（gitignore）
 ```
