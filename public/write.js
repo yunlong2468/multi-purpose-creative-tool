@@ -370,10 +370,25 @@ var PANE = {
         }
         p.el = el;
         PANE._renderPane(p);
+        // 渲染活跃标签
         if (p.activeTabId && p.tabs.length) {
-          var tab = p.tabs.find(function(t){ return t.id===p.activeTabId; });
-          if (tab) PANE._renderContent(p, tab);
+          var activeTab = p.tabs.find(function(t){ return t.id===p.activeTabId; });
+          if (activeTab) PANE._renderContent(p, activeTab);
         }
+        // 静默渲染非活跃的固定标签（确保 subPanelChat 等DOM存在）
+        p.tabs.forEach(function(t) {
+          if (t.id === p.activeTabId) return;  // 已渲染
+          if (FIXED_TABS.indexOf(t.type) < 0) return;  // 只预渲染固定标签
+          var panelId = 'panel_'+p.id+'_'+t.type;
+          var content = p.el.querySelector('.pane-content');
+          if (!content.querySelector('#'+panelId)) {
+            PANE._renderContent(p, t);
+            // 恢复活跃标签的 active 状态
+            content.querySelectorAll('.panel').forEach(function(pl){ pl.classList.remove('active'); });
+            var activePanel = content.querySelector('#panel_'+p.id+'_'+(activeTab?activeTab.type:''));
+            if (activePanel) activePanel.classList.add('active');
+          }
+        });
       });
       return true;
     } catch(e) { console.error('[Pane] loadLayout error:', e); return false; }
@@ -1651,13 +1666,13 @@ function _detectFileChanges(msgIdx) {
   var range = agentMsgs.slice(msgIdx, endIdx);
   var detected = {};
   range.forEach(function(m) {
-    // 方案A：检查子智能体类型
     if (m.agent === 'outliner') detected.outline = (detected.outline || 0) + 1;
     if (m.agent === 'character') detected.character = (detected.character || 0) + 1;
-    // 方案B：检查系统消息中的完成标记
+    if (m.agent === 'crawler') detected.crawler = (detected.crawler || 0) + 1;
     if (m.type === 'system' && m.content && m.content.indexOf('✅') >= 0) {
       if (m.content.indexOf('大纲') >= 0) detected.outlineConfirmed = true;
       if (m.content.indexOf('角色') >= 0) detected.characterConfirmed = true;
+      if (m.content.indexOf('爬取') >= 0 || m.content.indexOf('参考书籍') >= 0) detected.crawlerConfirmed = true;
     }
   });
   return detected;
@@ -1667,6 +1682,7 @@ function _buildUndoWarning(detected) {
   var items = [];
   if (detected.outline || detected.outlineConfirmed) items.push('• 大纲数据（卷和章节）');
   if (detected.character || detected.characterConfirmed) items.push('• 角色数据');
+  if (detected.crawler || detected.crawlerConfirmed) items.push('• 爬取的参考书籍');
   if (items.length === 0) return null;
   return '⚠️ 撤回此消息将同时还原以下文件：\n\n' + items.join('\n') + '\n\n此操作不可撤销。';
 }
@@ -2573,6 +2589,14 @@ function pollStreamBuffer() {
   if (_bufStopped) return;
   api('GET', '/writing-projects/'+projectId+'/stream-buffer?_t='+Date.now()).then(function(buf) {
     if (_bufStopped) return; // 在途请求：SSE会话已接管，停止干扰
+    // 缓冲过期检测：超过5分钟视为残留数据，停止轮询
+    if (buf && buf.startedAt && (Date.now() - buf.startedAt > 300000)) {
+      console.log("[Poll] 缓冲已过期（"+(Date.now()-buf.startedAt)/1000+"s），视为残留数据");
+      _bufActive = false; _currentStreamAgent = null;
+      _closeToolBubble(); setBusyUI(false); stopBufferPolling();
+      reloadHistoryFromDB();
+      return;
+    }
     if (!buf || (!buf.content && !buf.thinking && buf.phase !== 'tool_calling' && buf.phase !== 'tool_result')) { console.log("[Poll] 缓冲为空 _bufActive="+_bufActive+" msgs="+agentMsgs.length);
       if (_bufActive) {
         // 之前活跃→现在空了→流式结束，加载最终DB历史
@@ -2799,6 +2823,15 @@ function _stopPhraseRotation() {
 // 子智能体流式气泡辅助函数
 function _ensureToolBubble(agentType) {
   if (_toolStreamEl && _toolStreamAgent === agentType) return;
+  // 去重：检查DOM中是否已有该智能体的非流式气泡（由 renderAgentMessages 从DB渲染）
+  var agentName = getAgentName(agentType);
+  var existing = document.querySelectorAll('#subPanelChat .msg.agent-msg:not(.msg-streaming):not(.msg-tool-stream)');
+  for (var _bi = 0; _bi < existing.length; _bi++) {
+    var label = existing[_bi].querySelector('[onclick*="renameAgent"]');
+    if (label && label.textContent.trim() === agentName) {
+      _toolStreamAgent = agentType; return;
+    }
+  }
   _closeToolBubble();
   _toolStreamAgent = agentType;
   ensureMsgInner();

@@ -14,6 +14,7 @@ CDP 模式下 stdout 逐行输出 JSON 事件（实时状态推送）：
 非CDP模式输出单行 JSON 结果。
 """
 import os
+import re
 import sys
 import json
 import time
@@ -95,6 +96,70 @@ def _decode_body(body_bytes: bytes, encoding_hint: str = None) -> str:
 
 # ==================== 非CDP模式抓取 ====================
 
+def _find_font_url_deep(html: str) -> list:
+    """深度搜索所有字体URL：先搜HTML直链，再下载CSS文件搜@font-face"""
+    urls = []
+    # 第1步：直接从HTML搜woff2直链
+    urls.extend(re.findall(r"(https?://[^\"'\s]+\.woff2)", html, re.I))
+
+    # 第2步：下载所有CSS文件搜woff2
+    css_urls = re.findall(r'<link[^>]+href="([^"]+\.css[^"]*)"', html, re.I)
+    for css_url in css_urls:
+        if css_url.startswith("//"):
+            css_url = "https:" + css_url
+        try:
+            req = urllib.request.Request(css_url, headers={"User-Agent": "Mozilla/5.0"})
+            css_text = urllib.request.urlopen(req, timeout=8).read().decode("utf-8", errors="replace")
+            found = re.findall(r"url\([\"']?(https?://[^\"')\s]+\.woff2)[\"']?\)", css_text, re.I)
+            urls.extend(found)
+        except Exception:
+            pass
+
+    # 第3步：搜 style 标签内的@font-face
+    style_blocks = re.findall(r'<style[^>]*>([\s\S]*?)</style>', html, re.I)
+    for sb in style_blocks:
+        found = re.findall(r"url\([\"']?(https?://[^\"')\s]+\.woff2)[\"']?\)", sb, re.I)
+        urls.extend(found)
+
+    # 去重
+    seen = set()
+    return [u for u in urls if not (u in seen or seen.add(u))]
+
+
+def _decode_font_if_needed(html: str) -> str:
+    """深度搜索所有字体URL，逐一解码，合并映射后应用到HTML"""
+    try:
+        from glyph_decoder import decode_font, apply_mapping
+        font_urls = _find_font_url_deep(html)
+        if not font_urls:
+            print("[Bridge] 非CDP模式未找到字体URL", file=sys.stderr, flush=True)
+            return html
+        print(f"[Bridge] 非CDP模式找到 {len(font_urls)} 个字体URL", file=sys.stderr, flush=True)
+        # 逐字体解码，合并映射
+        merged = {}
+        for fu in font_urls:
+            print(f"[Bridge] 解码字体: {fu[:100]}", file=sys.stderr, flush=True)
+            _emit({"event": "debug", "msg": f"字体URL: {fu[:100]}"})
+            try:
+                m = decode_font(fu, timeout=15)
+                if m:
+                    dc = sum(1 for v in m.values() if v != '□')
+                    print(f"[Bridge]   映射: {dc}/{len(m)}字", file=sys.stderr, flush=True)
+                    merged.update(m)
+            except Exception as e:
+                print(f"[Bridge]   解码异常: {e}", file=sys.stderr, flush=True)
+        if merged:
+            total_dc = sum(1 for v in merged.values() if v != '□')
+            print(f"[Bridge] 合并映射: {total_dc}/{len(merged)}字", file=sys.stderr, flush=True)
+            _emit({"event": "debug", "msg": f"合并解码{total_dc}/{len(merged)}字"})
+            return apply_mapping(html, merged)
+        else:
+            print("[Bridge] 所有字体解码返回空映射", file=sys.stderr, flush=True)
+    except Exception as e:
+        print(f"[Bridge] 字体解码异常: {e}", file=sys.stderr, flush=True)
+    return html
+
+
 def fetch_page(url: str, platform: str) -> dict:
     cfg = PLATFORM_CONFIG.get(platform, DEFAULT_CONFIG)
     try:
@@ -110,6 +175,8 @@ def fetch_page(url: str, platform: str) -> dict:
         html = _decode_body(body_bytes, cfg.get("encoding_hint"))
         if not html or len(html) < 50:
             return {"ok": False, "error": f"解码后内容过短(长度={len(html)})", "url": url}
+        # 非CDP模式也做字体解码
+        html = _decode_font_if_needed(html)
         if len(html) > MAX_HTML_LENGTH:
             html = html[:MAX_HTML_LENGTH]
         return {"ok": True, "html": html, "url": url}
@@ -159,11 +226,34 @@ def _auto_start_chrome() -> bool:
 # ==================== CDP 模式抓取（实时事件输出） ====================
 
 _CAPTCHA_JS = (
-    # 检测人机验证弹窗：/html/body/div[3] display:block=验证中 display:none=已通过
+    # 多策略检测人机验证弹窗
     "(function(){"
-    "var el=document.querySelector('body > div:nth-of-type(3)');"
-    "if(!el)return false;"
-    "return window.getComputedStyle(el).display==='block';"
+    # 策略1：检测验证码iframe（geetest、滑块等常见类型）
+    "var ifs=document.querySelectorAll('iframe');"
+    "for(var i=0;i<ifs.length;i++){"
+    "  var s=ifs[i].src||'';"
+    "  if(s.indexOf('captcha')>=0||s.indexOf('verify')>=0||s.indexOf('geetest')>=0||"
+    "     s.indexOf('sec')>=0||s.indexOf('challenge')>=0){"
+    "    var d=window.getComputedStyle(ifs[i]).display;"
+    "    if(d!=='none'&&ifs[i].offsetHeight>20)return true;"
+    "  }"
+    "}"
+    # 策略2：检测body子div弹窗（字节系通用 — display:block=验证中）
+    "var divs=document.querySelectorAll('body>div');"
+    "for(var j=0;j<divs.length&&j<8;j++){"
+    "  if(window.getComputedStyle(divs[j]).display==='block'&&divs[j].offsetHeight>100){"
+    "    var t=divs[j].textContent||'';"
+    "    if(t.indexOf('验证')>=0||t.indexOf('安全')>=0||t.indexOf('拖动')>=0||"
+    "       t.indexOf('滑块')>=0||t.indexOf('人机')>=0){return true;}"
+    "  }"
+    "}"
+    # 策略3：检测class/id含captcha/verify/geetest的可见元素
+    "var els=document.querySelectorAll('[class*=\"captcha\"],[class*=\"verify\"],[class*=\"geetest\"],"
+    "[id*=\"captcha\"],[id*=\"verify\"],.sec warriors-captcha,.byte-captcha');"
+    "for(var k=0;k<els.length;k++){"
+    "  if(window.getComputedStyle(els[k]).display!=='none'&&els[k].offsetHeight>30)return true;"
+    "}"
+    "return false;"
     "})()"
 )
 
@@ -274,12 +364,19 @@ def fetch_page_cdp(url: str, platform: str):
         captcha_solved_at = 0
         no_captcha_loops = 8     # 8×2s=16s内无验证码→视为无需验证
         captcha_timeout_loops = CDP_CAPTCHA_TIMEOUT // CDP_POLL_INTERVAL
+        _poll_errors = 0  # 连续异常计数
         for i in range(captcha_timeout_loops):
             time.sleep(CDP_POLL_INTERVAL)
             try:
                 captcha_now = page.evaluate(_CAPTCHA_JS)
+                _poll_errors = 0
             except Exception:
-                captcha_now = False
+                # 页面正在跳转/加载中，保留上次状态，避免误判
+                _poll_errors += 1
+                if _poll_errors > 3:
+                    # 连续多次异常 → 页面可能已关闭或CDP断开
+                    _emit({"event": "debug", "msg": f"CDP轮询连续{_poll_errors}次异常，检查连接"})
+                continue
 
             if captcha_now and not last_captcha_state:
                 _emit({"event": "captcha", "phase": "detected"})
@@ -301,10 +398,24 @@ def fetch_page_cdp(url: str, platform: str):
                     _emit({"event": "debug", "msg": "无验证码且页面已有数据, 跳过等待直接提取"})
                     break
 
-        # 阶段2：验证码刚解决→短暂等待页面渲染；无验证码→直接提取
+        # 阶段2：验证码刚解决→等待页面稳定并渲染搜索结果
         if captcha_solved_at > 0:
             _emit({"event": "status", "phase": "waiting_render"})
-            for _ in range(3):
+            # 等待页面完成跳转/加载
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            # 额外等待搜索结果DOM出现（最多20s）
+            for _ in range(10):
+                try:
+                    has_data = page.evaluate(
+                        "!!(document.querySelector('.search-book-item')||document.querySelector('.muye-search-book-list'))"
+                    )
+                    if has_data:
+                        break
+                except Exception:
+                    pass
                 time.sleep(2)
 
         # 阶段3：获取全页HTML，解码字体反爬
@@ -317,25 +428,37 @@ def fetch_page_cdp(url: str, platform: str):
             _emit({"event": "debug", "msg": f"page.content() 失败: {e}"})
 
         if html and len(html) > 500:
-            # 尝试解码PUA字体乱码
+            # 尝试解码PUA字体乱码（支持多字体分片）
             _emit({"event": "status", "phase": "decoding"})
             try:
-                from glyph_decoder import extract_font_url_from_html, extract_font_url_from_page, decode_font, apply_mapping
+                from glyph_decoder import extract_font_url_from_page, decode_font, apply_mapping
                 print("[Bridge] 开始字体解码...", file=sys.stderr, flush=True)
-                font_url = extract_font_url_from_page(page)
-                if not font_url:
-                    font_url = extract_font_url_from_html(html)
-                if font_url:
-                    print(f"[Bridge] 字体URL: {font_url}", file=sys.stderr, flush=True)
-                    _emit({"event": "debug", "msg": f"字体URL: {font_url[:100]}"})
-                    mapping = decode_font(font_url, timeout=15)
-                    if mapping:
-                        decoded_count = sum(1 for v in mapping.values() if v != '□')
-                        print(f"[Bridge] 解码映射: {decoded_count}/{len(mapping)}字", file=sys.stderr, flush=True)
-                        _emit({"event": "debug", "msg": f"解码{decoded_count}/{len(mapping)}字"})
-                        html = apply_mapping(html, mapping)
+                font_urls = extract_font_url_from_page(page)
+                if not font_urls:
+                    # 兜底：从HTML文本搜
+                    from glyph_decoder import extract_font_url_from_html
+                    font_urls = extract_font_url_from_html(html)
+                if font_urls:
+                    print(f"[Bridge] 找到 {len(font_urls)} 个字体URL", file=sys.stderr, flush=True)
+                    merged = {}
+                    for fu in font_urls:
+                        print(f"[Bridge] 解码字体: {fu[:100]}", file=sys.stderr, flush=True)
+                        _emit({"event": "debug", "msg": f"字体URL: {fu[:100]}"})
+                        try:
+                            m = decode_font(fu, timeout=15)
+                            if m:
+                                dc = sum(1 for v in m.values() if v != '□')
+                                print(f"[Bridge]   映射: {dc}/{len(m)}字", file=sys.stderr, flush=True)
+                                merged.update(m)
+                        except Exception as e:
+                            print(f"[Bridge]   解码异常: {e}", file=sys.stderr, flush=True)
+                    if merged:
+                        total_dc = sum(1 for v in merged.values() if v != '□')
+                        print(f"[Bridge] 合并映射: {total_dc}/{len(merged)}字", file=sys.stderr, flush=True)
+                        _emit({"event": "debug", "msg": f"合并解码{total_dc}/{len(merged)}字"})
+                        html = apply_mapping(html, merged)
                     else:
-                        print("[Bridge] decode_font返回空映射", file=sys.stderr, flush=True)
+                        print("[Bridge] 所有字体解码返回空映射", file=sys.stderr, flush=True)
                 else:
                     print("[Bridge] 未找到字体URL", file=sys.stderr, flush=True)
                     _emit({"event": "debug", "msg": "未找到字体URL"})

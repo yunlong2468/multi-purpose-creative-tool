@@ -21,12 +21,26 @@ PADDLEOCR_TOKEN = os.environ.get("PADDLEOCR_TOKEN", "")
 PADDLEOCR_MODEL = "PaddleOCR-VL-1.5"
 
 # 批次参数（每次 API 调用处理的字符数）
-OCR_CHARS_PER_ROW = 10          # 每行字符数
-OCR_ROWS_PER_BATCH = 6          # 每批次行数
-OCR_CHARS_PER_BATCH = OCR_CHARS_PER_ROW * OCR_ROWS_PER_BATCH  # 60
-OCR_CELL_SIZE = 80              # 单元格像素
-OCR_FONT_SIZE = 48              # 渲染字号
-OCR_PADDING = 16                # 单元格间距
+OCR_CHARS_PER_ROW = 5           # 每行字符数（编号锚点模式，单元格更宽）
+OCR_ROWS_PER_BATCH = 10         # 每批次行数
+OCR_CHARS_PER_BATCH = OCR_CHARS_PER_ROW * OCR_ROWS_PER_BATCH  # 50
+OCR_CELL_W = 170                # 单元格宽度（容纳 NNN: + 字符）
+OCR_CELL_H = 80                 # 单元格高度
+OCR_FONT_SIZE = 48              # PUA字符渲染字号
+OCR_NUM_FONT_SIZE = 22          # 编号字号
+OCR_PADDING = 20                # 单元格间距
+
+# 编号用标准字体（需确保在所有系统上可渲染数字和标点）
+_NUM_FONT_CANDIDATES = [
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/calibri.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
+]
+_NUM_FONT_PATH = None
+for _fp in _NUM_FONT_CANDIDATES:
+    if os.path.exists(_fp):
+        _NUM_FONT_PATH = _fp
+        break
 
 # 参考中文字体候选（phash 兜底模式用）
 _REF_FONT_PATHS = [
@@ -89,6 +103,164 @@ def _render_glyph_hash(font_path: str, char: str) -> imagehash.ImageHash:
     return imagehash.phash(img, hash_size=16)  # 16=256bit
 
 
+# ============================================================
+#  矢量特征比对模式（默认，无需OCR/API，从字体轮廓提取特征）
+# ============================================================
+
+def _get_glyph_vector_features(font, cmap: dict, char: str) -> dict:
+    """从fontTools字形矢量数据提取特征：轮廓数、点数、宽高比。
+    自动处理复合字形（递归统计组件轮廓）。返回None表示提取失败。"""
+    try:
+        cp = ord(char)
+        glyph_name = cmap.get(cp)
+        if not glyph_name:
+            return None
+
+        glyf_table = font.get("glyf")
+        if not glyf_table:
+            return None
+
+        glyph_set = font.getGlyphSet()
+        if glyph_name not in glyph_set:
+            return None
+
+        glyph = glyf_table[glyph_name]
+
+        # 包围盒
+        try:
+            from fontTools.pens.boundsPen import ControlBoundsPen
+            pen = ControlBoundsPen(glyph_set)
+            glyph_set[glyph_name].draw(pen)
+            bnd = pen.bounds
+            if not bnd:
+                return None
+            x_min, y_min, x_max, y_max = bnd
+        except Exception:
+            return None
+
+        w = x_max - x_min
+        h = y_max - y_min
+        if w <= 0 and h <= 0:
+            return None
+
+        # 轮廓数和点数（兼容不同fontTools版本的getCoordinates）
+        if glyph.numberOfContours > 0:
+            n_contours = glyph.numberOfContours
+            result = glyph.getCoordinates(glyf_table)
+            coords = result[0] if result else []
+            n_points = len(coords)
+        else:
+            # 复合字形：递归统计
+            def _count_comp(g):
+                nc, np_val = 0, 0
+                if hasattr(g, "components"):
+                    for comp in g.components:
+                        sg = glyf_table[comp.glyphName]
+                        if sg.numberOfContours > 0:
+                            nc += sg.numberOfContours
+                            r = sg.getCoordinates(glyf_table)
+                            np_val += len(r[0]) if r else 0
+                        elif sg.numberOfContours < 0:
+                            sc, sp = _count_comp(sg)
+                            nc += sc
+                            np_val += sp
+                return nc, np_val
+            n_contours, n_points = _count_comp(glyph)
+            if n_contours == 0:
+                return None
+    except Exception:
+        return None
+
+    return {
+        "n_contours": n_contours,
+        "n_points": n_points,
+        "width": w,
+        "height": h,
+        "aspect": w / max(h, 1),
+    }
+
+
+def _build_vector_index(font, cmap: dict, char_set: str) -> dict:
+    """为给定字符集构建矢量特征索引。{char: features}"""
+    index = {}
+    for ch in char_set:
+        feat = _get_glyph_vector_features(font, cmap, ch)
+        if feat:
+            index[ch] = feat
+    return index
+
+
+def _vector_match(pua_features: dict, ref_index: dict) -> tuple:
+    """矢量特征匹配：返回 (最佳汉字, 置信分)。分数越小越好。"""
+    if not pua_features:
+        return "□", 999
+
+    nc = pua_features["n_contours"]
+    np = pua_features["n_points"]
+    ar = pua_features["aspect"]
+
+    best_char = "□"
+    best_score = float("inf")
+
+    for ch, ref in ref_index.items():
+        cd = abs(nc - ref["n_contours"])
+        if cd >= 4:
+            continue  # 轮廓数差太多，直接跳过
+
+        # 点数比率
+        if ref["n_points"] > 0 and np > 0:
+            r = np / ref["n_points"]
+            pd = abs(1.0 - (r if r <= 1 else 1 / r))
+        else:
+            pd = 1.0
+
+        # 宽高比差
+        if ar > 0 and ref["aspect"] > 0:
+            ad = abs(ar - ref["aspect"])
+        else:
+            ad = 1.0
+
+        score = cd * 100 + pd * 60 + ad * 40
+        if score < best_score:
+            best_score = score
+            best_char = ch
+
+    return best_char, best_score
+
+
+def _vector_prefilter(pua_features: dict, ref_index: dict, top_n: int = 20) -> list:
+    """矢量特征预筛：从参考字集中选出top-N候选供像素比对精排。"""
+    if not pua_features:
+        return list(ref_index.keys())[:top_n]
+
+    nc = pua_features["n_contours"]
+    np_val = pua_features["n_points"]
+    ar = pua_features["aspect"]
+
+    scored = []
+    for ch, ref in ref_index.items():
+        cd = abs(nc - ref["n_contours"])
+        if cd >= 5:
+            continue
+
+        if ref["n_points"] > 0 and np_val > 0:
+            r = np_val / ref["n_points"]
+            pd = abs(1.0 - (r if r <= 1 else 1 / r))
+        else:
+            pd = 1.0
+
+        if ar > 0 and ref["aspect"] > 0:
+            ad = abs(ar - ref["aspect"])
+        else:
+            ad = 1.0
+
+        score = cd * 100 + pd * 60 + ad * 40
+        scored.append((score, ch))
+
+    scored.sort(key=lambda x: x[0])
+    return [ch for _, ch in scored[:top_n]]
+
+
 # requests 为OCR API调用所需（可选依赖，仅使用OCR模式时需要）
 try:
     import requests as _requests_module
@@ -96,60 +268,79 @@ except ImportError:
     _requests_module = None
 
 
-def _create_batch_grid_image(pua_chars: list, font_path: str, batch_idx: int,
-                             chars_per_row: int = None, rows_per_batch: int = None,
-                             cell_size: int = None, font_size: int = None,
-                             padding: int = None) -> tuple:
+def _create_numbered_batch_image(pua_chars: list, font_path: str, batch_idx: int) -> tuple:
     """
-    创建PUA字符网格图片，供PaddleOCR批量识别。
-    返回 (图片路径, 该批次的PUA字符列表)。
+    创建PUA字符编号锚点图片（双字体渲染），供PaddleOCR识别。
+    每格格式：左侧 Arial 渲染 "NNN:"，右侧 PUA字体 渲染待解码字符。
+    OCR漏字/重排不影响映射，正则按编号匹配。
+    返回 (图片路径, 该批次的PUA字符列表, 全局起始编号)。
     """
-    chars_per_row = chars_per_row or OCR_CHARS_PER_ROW
-    rows_per_batch = rows_per_batch or OCR_ROWS_PER_BATCH
-    cell_size = cell_size or OCR_CELL_SIZE
-    font_size = font_size or OCR_FONT_SIZE
-    padding = padding or OCR_PADDING
+    chars_per_row = OCR_CHARS_PER_ROW
+    chars_per_batch = OCR_CHARS_PER_BATCH
+    cell_w = OCR_CELL_W
+    cell_h = OCR_CELL_H
+    font_size = OCR_FONT_SIZE
+    num_size = OCR_NUM_FONT_SIZE
+    padding = OCR_PADDING
 
-    chars_per_batch = chars_per_row * rows_per_batch
     start = batch_idx * chars_per_batch
     batch_chars = pua_chars[start:start + chars_per_batch]
-
     if not batch_chars:
-        return None, []
+        return None, [], start
 
     cols = min(chars_per_row, len(batch_chars))
     rows = (len(batch_chars) + cols - 1) // cols
 
-    img_w = cols * (cell_size + padding) + padding
-    img_h = rows * (cell_size + padding) + padding
+    img_w = cols * (cell_w + padding) + padding
+    img_h = rows * (cell_h + padding) + padding
 
     img = Image.new("L", (img_w, img_h), 255)
     draw = ImageDraw.Draw(img)
 
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        pua_font = ImageFont.truetype(font_path, font_size)
     except Exception:
-        return None, batch_chars
+        return None, batch_chars, start
+
+    num_font = None
+    if _NUM_FONT_PATH:
+        try:
+            num_font = ImageFont.truetype(_NUM_FONT_PATH, num_size)
+        except Exception:
+            pass
 
     for i, ch in enumerate(batch_chars):
+        global_idx = start + i + 1  # 编号从 001 开始
         row = i // cols
         col = i % cols
-        cx = padding + col * (cell_size + padding) + cell_size // 2
-        cy = padding + row * (cell_size + padding) + cell_size // 2
 
-        bbox = draw.textbbox((0, 0), ch, font=font)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        if tw <= 0 or th <= 0:
-            continue
-        tx = cx - tw // 2 - bbox[0]
-        ty = cy - th // 2 - bbox[1]
-        draw.text((tx, ty), ch, fill=0, font=font)
+        cell_x = padding + col * (cell_w + padding)
+        cell_y = padding + row * (cell_h + padding)
+        cell_cx = cell_x + cell_w // 2
+        cell_cy = cell_y + cell_h // 2
+
+        # 左侧：编号 "NNN:" 用标准字体（Arial），靠左垂直居中
+        label = f"{global_idx:03d}:"
+        if num_font:
+            lbox = draw.textbbox((0, 0), label, font=num_font)
+            lw, lh = lbox[2] - lbox[0], lbox[3] - lbox[1]
+            lx = cell_x + 6 - lbox[0]
+            ly = cell_cy - lh // 2 - lbox[1]
+            draw.text((lx, ly), label, fill=0, font=num_font)
+
+        # 右侧：PUA字符
+        if ch.strip():
+            cbox = draw.textbbox((0, 0), ch, font=pua_font)
+            cw, ch_h = cbox[2] - cbox[0], cbox[3] - cbox[1]
+            if cw > 0 and ch_h > 0:
+                cx = cell_x + 80 - cbox[0]  # 偏移到编号右侧
+                cy = cell_cy - ch_h // 2 - cbox[1]
+                draw.text((cx, cy), ch, fill=0, font=pua_font)
 
     tmp_path = f"C:/temp/_ocr_batch_{batch_idx}.png"
     os.makedirs("C:/temp", exist_ok=True)
     img.save(tmp_path)
-    return tmp_path, batch_chars
+    return tmp_path, batch_chars, start
 
 
 def _submit_ocr_job(image_path: str, token: str = None) -> str:
@@ -224,6 +415,43 @@ def _download_ocr_text(jsonl_url: str) -> str:
     return "\n".join(all_text)
 
 
+def _parse_numbered_ocr_text(ocr_text: str, batch_chars: list, global_start: int) -> dict:
+    """从OCR结果按编号锚点提取字符映射，兼容各种分隔符，返回 {PUA→汉字}。"""
+    pairs = re.findall(r'(\d{3})\W*(\S)', ocr_text)
+    if not pairs:
+        # 回退：尝试更宽松的匹配（只匹配数字+字符）
+        pairs = re.findall(r'(\d{3})\W*(\S)', ocr_text.replace('\n', ' '))
+
+    mapping = {}
+    decoded = 0
+    for num_str, recognized_char in pairs:
+        num = int(num_str)
+        idx = num - global_start - 1  # 全局编号 → 批内索引
+        if idx < 0 or idx >= len(batch_chars):
+            continue
+        pua_char = batch_chars[idx]
+        # 只保留有意义的结果（排除纯空白、空）
+        if recognized_char and recognized_char.strip():
+            mapping[pua_char] = recognized_char
+            decoded += 1
+
+    # 未被编号锚点匹配到的字符标记为失败
+    failed = 0
+    for ch in batch_chars:
+        if ch not in mapping:
+            mapping[ch] = "□"
+            failed += 1
+
+    print(f"[OCR] 编号锚点解析: 成功{decoded} 失败{failed}/{len(batch_chars)}",
+          file=sys.stderr, flush=True)
+    if decoded > 0:
+        # 显示前几个匹配样例
+        samples = list(mapping.items())[:5]
+        print(f"[OCR] 样例: {samples}", file=sys.stderr, flush=True)
+
+    return mapping
+
+
 def decode_font_via_ocr(font_url: str, token: str = None, timeout: int = 180) -> dict:
     """
     PaddleOCR API 解码模式。
@@ -243,17 +471,23 @@ def decode_font_via_ocr(font_url: str, token: str = None, timeout: int = 180) ->
     req = urllib.request.Request(font_url, headers={"User-Agent": "Mozilla/5.0"})
     font_data = urllib.request.urlopen(req, timeout=timeout).read()
 
-    # 2. 解析字体
-    font = TTFont(io.BytesIO(font_data))
+    # 2. woff2 → TTF 解压
+    tmp_path = "C:/temp/_fanqie_decoded.ttf"
+    tmp_woff2 = "C:/temp/_fanqie_raw.woff2"
+    os.makedirs("C:/temp", exist_ok=True)
+    try:
+        with open(tmp_woff2, "wb") as f:
+            f.write(font_data)
+        from fontTools.ttLib.woff2 import decompress
+        decompress(tmp_woff2, tmp_path)
+        font = TTFont(tmp_path)
+    except Exception:
+        font = TTFont(io.BytesIO(font_data))
+        font.flavor = None
+        font.save(tmp_path)
     cmap = font.getBestCmap()
 
-    # 3. 导出为临时TTF供Pillow渲染
-    tmp_path = "C:/temp/_fanqie_decoded.ttf"
-    os.makedirs("C:/temp", exist_ok=True)
-    font.flavor = None
-    font.save(tmp_path)
-
-    # 4. 提取PUA字符集
+    # 3. 提取PUA字符集
     pua_chars = [chr(cp) for cp in cmap if 0xE000 <= cp <= 0xF8FF]
     total = len(pua_chars)
     print(f"[OCR] PUA字符数: {total}", file=sys.stderr, flush=True)
@@ -261,14 +495,14 @@ def decode_font_via_ocr(font_url: str, token: str = None, timeout: int = 180) ->
     if total == 0:
         return {}
 
-    # 5. 分批创建网格图片并OCR识别
+    # 5. 分批创建编号锚点图片并OCR识别
     batch_count = (total + OCR_CHARS_PER_BATCH - 1) // OCR_CHARS_PER_BATCH
     mapping = {}
-    decoded = 0
-    failed = 0
+    total_decoded = 0
+    total_failed = 0
 
     for batch_idx in range(batch_count):
-        img_path, batch_chars = _create_batch_grid_image(
+        img_path, batch_chars, global_start = _create_numbered_batch_image(
             pua_chars, tmp_path, batch_idx
         )
         if not img_path or not batch_chars:
@@ -276,7 +510,8 @@ def decode_font_via_ocr(font_url: str, token: str = None, timeout: int = 180) ->
 
         try:
             print(f"[OCR] 批次 {batch_idx+1}/{batch_count}: "
-                  f"{len(batch_chars)}字, 提交中...", file=sys.stderr, flush=True)
+                  f"{len(batch_chars)}字 (编号{global_start+1:03d}-{global_start+len(batch_chars):03d}), "
+                  f"提交中...", file=sys.stderr, flush=True)
 
             job_id = _submit_ocr_job(img_path, token)
             print(f"[OCR] jobId={job_id[:12]}..., 等待结果...", file=sys.stderr, flush=True)
@@ -284,31 +519,24 @@ def decode_font_via_ocr(font_url: str, token: str = None, timeout: int = 180) ->
             jsonl_url = _poll_ocr_job(job_id, token, timeout=timeout)
             ocr_text = _download_ocr_text(jsonl_url)
 
-            # 清洗：保留中文字符 + 英文大小写 + 数字
-            cleaned = re.sub(r'[^一-鿿A-Za-z0-9]', '', ocr_text)
-            print(f"[OCR] 识别到 {len(cleaned)} 个字符（含英文数字）, "
-                  f"预期 {len(batch_chars)} 个", file=sys.stderr, flush=True)
-            # 调试：输出前20个识别字符
-            if len(cleaned) > 0:
-                sample = cleaned[:20] if len(cleaned) >= 20 else cleaned
-                print(f"[OCR] 样本: {sample}", file=sys.stderr, flush=True)
+            # 显示OCR原始输出片段（调试用）
+            preview = ocr_text[:200].replace('\n', ' ').strip()
+            print(f"[OCR] 原始输出: {preview}...", file=sys.stderr, flush=True)
 
-            # 按位置映射
-            for i, ch in enumerate(cleaned):
-                if i < len(batch_chars):
-                    mapping[batch_chars[i]] = ch
-                    decoded += 1
+            # 编号锚点解析（替代位置映射）
+            batch_map = _parse_numbered_ocr_text(ocr_text, batch_chars, global_start)
+            mapping.update(batch_map)
 
-            # 未被识别的字符标记为失败
-            for i in range(len(cleaned), len(batch_chars)):
-                mapping[batch_chars[i]] = "□"
-                failed += 1
+            decoded = sum(1 for v in batch_map.values() if v != "□")
+            failed = sum(1 for v in batch_map.values() if v == "□")
+            total_decoded += decoded
+            total_failed += failed
 
         except Exception as e:
             print(f"[OCR] 批次 {batch_idx+1} 失败: {e}", file=sys.stderr, flush=True)
             for ch in batch_chars:
                 mapping[ch] = "□"
-                failed += 1
+                total_failed += len(batch_chars)
         finally:
             # 清理临时图片
             try:
@@ -317,7 +545,7 @@ def decode_font_via_ocr(font_url: str, token: str = None, timeout: int = 180) ->
             except Exception:
                 pass
 
-    print(f"[OCR] 解码完成: {decoded}/{total}字 ({failed}失败)",
+    print(f"[OCR] 解码完成: {total_decoded}/{total}字 ({total_failed}失败)",
           file=sys.stderr, flush=True)
     return mapping
 
@@ -332,16 +560,23 @@ def decode_font_phash(font_url: str, timeout: int = 10) -> dict:
     req = urllib.request.Request(font_url, headers={"User-Agent": "Mozilla/5.0"})
     font_data = urllib.request.urlopen(req, timeout=timeout).read()
 
-    # 2. 解析字体
-    font = TTFont(io.BytesIO(font_data))
+    # 2. woff2 → TTF 解压
+    tmp_path = "C:/temp/_fanqie_decoded.ttf"
+    try:
+        tmp_woff2 = "C:/temp/_fanqie_raw.woff2"
+        with open(tmp_woff2, "wb") as f:
+            f.write(font_data)
+        from fontTools.ttLib.woff2 import decompress
+        decompress(tmp_woff2, tmp_path)
+        font = TTFont(tmp_path)
+        os.makedirs("C:/temp", exist_ok=True)
+    except Exception:
+        font = TTFont(io.BytesIO(font_data))
+        font.flavor = None
+        font.save(tmp_path)
     cmap = font.getBestCmap()
 
-    # 3. 导出为临时TTF供Pillow渲染（fontTools无法直接给Pillow用）
-    tmp_path = "C:/temp/_fanqie_decoded.ttf"
-    font.flavor = None  # woff2 → ttf
-    font.save(tmp_path)
-
-    # 4. 提取PUA字符集
+    # 3. 提取PUA字符集
     pua_chars = [chr(cp) for cp in cmap if 0xE000 <= cp <= 0xF8FF]
     print(f"[Decoder] PUA字符数: {len(pua_chars)}", flush=True)
 
@@ -408,22 +643,175 @@ def decode_font_phash(font_url: str, timeout: int = 10) -> dict:
 
 def decode_font(font_url: str, timeout: int = 10, token: str = None) -> dict:
     """
-    解码字体，自动选择最佳模式：
-    1. 如果配置了 PADDLEOCR_TOKEN → 优先OCR模式（高精度）
-    2. 否则 → phash像素比对（本地兜底）
+    解码字体，混合策略：
+    1. 矢量特征预筛（2500字→20候选）
+    2. phash+像素比对精排（20候选择最优）
+    3. PaddleOCR补漏（可选）
     返回 {PUA码点→汉字} 映射表
     """
-    token = token or PADDLEOCR_TOKEN
+    import urllib.request as _ur
 
-    if token:
-        print("[Decoder] 使用 PaddleOCR 模式", file=sys.stderr, flush=True)
-        mapping = decode_font_via_ocr(font_url, token=token, timeout=max(timeout, 180))
-        if mapping and sum(1 for v in mapping.values() if v != "□") > 0:
-            return mapping
-        print("[Decoder] OCR模式失败或无结果，回退到phash模式", file=sys.stderr, flush=True)
+    # 1. 下载字体
+    req = _ur.Request(font_url, headers={"User-Agent": "Mozilla/5.0"})
+    font_data = _ur.urlopen(req, timeout=timeout).read()
 
-    print("[Decoder] 使用 phash 像素比对模式", file=sys.stderr, flush=True)
-    return decode_font_phash(font_url, timeout=timeout)
+    # 2. woff2 → TTF 显式解压（fontTools可直读woff2，但解压后Pillow才能用）
+    tmp_ttf = "C:/temp/_fanqie_decoded.ttf"
+    tmp_woff2 = "C:/temp/_fanqie_raw.woff2"
+    os.makedirs("C:/temp", exist_ok=True)
+    try:
+        # 保存原始woff2
+        with open(tmp_woff2, "wb") as f:
+            f.write(font_data)
+        # 显式解压woff2 → TTF
+        from fontTools.ttLib.woff2 import decompress
+        decompress(tmp_woff2, tmp_ttf)
+        font = TTFont(tmp_ttf)
+        print("[Decoder] woff2已解压为TTF", file=sys.stderr, flush=True)
+    except Exception as e:
+        # 回退：fontTools直接读（可能已经是TTF/OTF格式）
+        print(f"[Decoder] woff2解压失败({e})，尝试直接读取", file=sys.stderr, flush=True)
+        font = TTFont(io.BytesIO(font_data))
+        font.flavor = None
+        font.save(tmp_ttf)
+    cmap = font.getBestCmap()
+
+    # 3. 提取PUA字符集
+    pua_chars = [chr(cp) for cp in cmap if 0xE000 <= cp <= 0xF8FF]
+    total = len(pua_chars)
+    print(f"[Decoder] PUA字符数: {total}", file=sys.stderr, flush=True)
+    if total == 0:
+        return {}
+
+    # 4. 提取PUA矢量特征（用于预筛，CFF字体此步全失败）
+    pua_vec = {}
+    pua_hashes = {}  # 感知哈希（CFF字体无矢量特征时的备选预筛）
+    for ch in pua_chars:
+        feat = _get_glyph_vector_features(font, cmap, ch)
+        if feat:
+            pua_vec[ch] = feat
+        # 同时计算感知哈希（矢量失败时的回退预筛）
+        h = _render_glyph_hash(tmp_ttf, ch)
+        if h:
+            pua_hashes[ch] = h
+    print(f"[Decoder] 矢量特征: {len(pua_vec)}/{total}"
+          + (f" 感知哈希: {len(pua_hashes)}/{total}" if len(pua_vec) < total else ""),
+          file=sys.stderr, flush=True)
+
+    # 5. 渲染PUA像素（用于精排）
+    pua_pixels = {}
+    for ch in pua_chars:
+        p = _render_glyph_pixels(tmp_ttf, ch)
+        if p:
+            pua_pixels[ch] = p
+
+    # 6. 多参考字体混合匹配
+    best_mapping = {}
+    best_decoded = 0
+
+    for ref_path in _REF_FONT_PATHS:
+        if not os.path.exists(ref_path):
+            continue
+        try:
+            ref_font = TTFont(ref_path)
+            ref_cmap = ref_font.getBestCmap()
+        except Exception:
+            continue
+
+        print(f"[Decoder] 参考字体 {os.path.basename(ref_path)}...",
+              file=sys.stderr, flush=True)
+
+        try:
+            # 建矢量索引（预筛用）
+            vec_idx = _build_vector_index(ref_font, ref_cmap, _COMMON_CHARS)
+            print(f"[Decoder]   矢量索引 {len(vec_idx)} 字", file=sys.stderr, flush=True)
+
+            # CFF回退：预建参考字体感知哈希索引（只建一次，不在循环内重复渲染）
+            ref_hashes = {}
+            if len(pua_vec) < total:
+                print(f"[Decoder]   预建感知哈希索引...", file=sys.stderr, flush=True)
+                for ref_ch in _COMMON_CHARS:
+                    rh = _render_glyph_hash(ref_path, ref_ch)
+                    if rh is not None:
+                        ref_hashes[ref_ch] = rh
+                print(f"[Decoder]   感知哈希索引 {len(ref_hashes)} 字", file=sys.stderr, flush=True)
+
+            mapping = {}
+            decoded = 0
+
+            for pua_ch in pua_chars:
+                # 阶段1：预筛 → top20候选（矢量优先，CFF回退感知哈希）
+                pua_feat = pua_vec.get(pua_ch)
+                if pua_feat:
+                    candidates = _vector_prefilter(pua_feat, vec_idx, top_n=20)
+                elif ref_hashes:
+                    pua_hash = pua_hashes.get(pua_ch)
+                    if pua_hash:
+                        scored = [(pua_hash - rh, ch) for ch, rh in ref_hashes.items()]
+                        scored.sort(key=lambda x: x[0])
+                        candidates = [ch for _, ch in scored[:20]]
+                    else:
+                        candidates = list(vec_idx.keys())[:20]
+                else:
+                    candidates = list(vec_idx.keys())[:20]
+
+                # 阶段2：像素比对精排
+                pua_pix = pua_pixels.get(pua_ch)
+                if pua_pix is None:
+                    mapping[pua_ch] = "□"
+                    continue
+
+                best_char = "□"
+                best_sim = 0.0
+                for candidate in candidates:
+                    ref_pix = _render_glyph_pixels(ref_path, candidate)
+                    if ref_pix is None:
+                        continue
+                    sim = _pixel_similarity(pua_pix, ref_pix)
+                    if sim > best_sim:
+                        best_sim = sim
+                        best_char = candidate
+
+                if best_sim >= 0.55:
+                    mapping[pua_ch] = best_char
+                    decoded += 1
+                else:
+                    mapping[pua_ch] = "□"
+
+            print(f"[Decoder]   {os.path.basename(ref_path)}: {decoded}/{total}字",
+                  file=sys.stderr, flush=True)
+            if decoded > best_decoded:
+                best_decoded = decoded
+                best_mapping = mapping
+        except Exception as e:
+            print(f"[Decoder]   {os.path.basename(ref_path)} 异常: {e}",
+                  file=sys.stderr, flush=True)
+
+    print(f"[Decoder] 像素精排: {best_decoded}/{total}字",
+          file=sys.stderr, flush=True)
+
+    # 7. OCR补漏（可选）
+    ocr_token = token or PADDLEOCR_TOKEN
+    if ocr_token and best_decoded < total:
+        unmapped = [k for k, v in best_mapping.items() if v == "□"]
+        print(f"[Decoder] {len(unmapped)}字未匹配, OCR补漏...",
+              file=sys.stderr, flush=True)
+        try:
+            ocr_result = decode_font_via_ocr(font_url, token=ocr_token, timeout=max(timeout, 180))
+            ocr_added = 0
+            for k, v in ocr_result.items():
+                if v != "□" and best_mapping.get(k, "□") == "□":
+                    best_mapping[k] = v
+                    ocr_added += 1
+            if ocr_added > 0:
+                best_decoded += ocr_added
+                print(f"[Decoder] OCR补漏 {ocr_added} 字", file=sys.stderr, flush=True)
+        except Exception as e:
+            print(f"[Decoder] OCR补漏失败: {e}", file=sys.stderr, flush=True)
+
+    print(f"[Decoder] 最终: {best_decoded}/{total}字",
+          file=sys.stderr, flush=True)
+    return best_mapping
 
 
 def apply_mapping(html: str, mapping: dict) -> str:
@@ -437,12 +825,10 @@ def apply_mapping(html: str, mapping: dict) -> str:
     return "".join(result)
 
 
-def extract_font_url_from_page(page) -> str:
-    """通过CDP找到自定义字体(.woff2)的URL。
-    策略：先从HTML提取CSS link → 下载CSS解析@font-face → 兜底用document.fonts。
-    （跨域CSS的cssRules不可访问，不能直接从styleSheets取）
-    参数 page 是 Playwright 的 Page 对象。
-    """
+def extract_font_url_from_page(page) -> list:
+    """通过CDP找到所有自定义字体(.woff2)的URL（支持多字体分片）。
+    返回 URL 列表，可能为空。"""
+    urls = []
     try:
         # 1. 从页面HTML中提取所有CSS文件链接
         css_links = page.evaluate(
@@ -451,49 +837,44 @@ def extract_font_url_from_page(page) -> str:
         )
         css_urls = json.loads(css_links) if css_links else []
 
-        # 2. 逐个下载CSS文件，搜索@font-face中的woff2
+        # 2. 逐个下载CSS文件，收集所有woff2 URL
         for css_url in css_urls:
             if not css_url or '.css' not in css_url.lower():
                 continue
-            # 补全协议
             if css_url.startswith('//'):
                 css_url = 'https:' + css_url
             try:
                 req = urllib.request.Request(css_url, headers={"User-Agent": "Mozilla/5.0"})
                 css_text = urllib.request.urlopen(req, timeout=8).read().decode('utf-8', errors='replace')
-                # 搜索: url("https://...awesome-font...woff2") 或 url(https://...woff2)
-                matches = re.findall(
-                    r"url\([\"']?(https?://[^\"'\)]*awesome-font[^\"'\)]*\.woff2)[\"']?\)",
-                    css_text
+                # 收集所有 woff2 URL
+                found = re.findall(
+                    r"url\([\"']?(https?://[^\"')\s]+\.woff2)[\"']?\)",
+                    css_text, re.I
                 )
-                if matches:
-                    return matches[0]
-                # 搜索: font-family: DNMrHs... 且有 url(...woff2)
-                if 'DNMrHs' in css_text or 'font-face' in css_text:
-                    matches = re.findall(
-                        r"url\([\"']?(https?://[^\"'\)]+\.woff2)[\"']?\)",
-                        css_text
-                    )
-                    if matches:
-                        return matches[0]
+                if found:
+                    urls.extend(found)
             except Exception:
                 pass
 
         # 3. 兜底：从HTML文本中搜索
-        return ""
+        if not urls:
+            html = page.content() if hasattr(page, 'content') else ''
+            found = re.findall(r"(https?://[^\"'\s]+\.woff2)", html, re.I)
+            urls.extend(found)
+        # 去重保持顺序
+        seen = set()
+        return [u for u in urls if not (u in seen or seen.add(u))]
     except Exception:
-        return ""
+        return []
 
 
-def extract_font_url_from_html(html: str) -> str:
-    """从HTML文本中提取字体URL（备用方案，外部CSS时无效）"""
-    m = re.search(r"url\([\"']?(https?://[^\"'\s)]+\.woff2)[\"']?\)", html)
-    if m:
-        return m.group(1)
-    m = re.search(r"(https?://[^\"'\s]+awesome-font[^\"'\s]+\.woff2)", html)
-    if m:
-        return m.group(1)
-    return ""
+def extract_font_url_from_html(html: str) -> list:
+    """从HTML文本中提取字体URL列表（备用方案）"""
+    urls = re.findall(r"(https?://[^\"'\s]+\.woff2)", html, re.I)
+    if not urls:
+        urls = re.findall(r"url\([\"']?(https?://[^\"')\s]+\.woff2)[\"']?\)", html, re.I)
+    seen = set()
+    return [u for u in urls if not (u in seen or seen.add(u))]
 
 
 if __name__ == "__main__":

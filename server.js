@@ -292,8 +292,10 @@ app.post('/api/writing-projects/:id/undo-last', auth, (req, res) => {
         var safeTime = lastUser.created_at;
         // 删除对话记录
         db.run('DELETE FROM agent_conversations WHERE project_id=? AND id>=?', [projectId, lastUser.id]);
-        // 回滚文件数据
-        var rollback = { volumes: 0, chapters: 0, characters: 0 };
+        // 回滚文件数据 + 爬虫数据
+        var rollback = { volumes: 0, chapters: 0, characters: 0, crawlerBooks: 0 };
+        rollback.crawlerBooks = (queryAll('SELECT id FROM agent_crawler_data WHERE project_id=? AND created_at >= ?', [projectId, safeTime])).length;
+        db.run('DELETE FROM agent_crawler_data WHERE project_id=? AND created_at >= ?', [projectId, safeTime]);
         if (safePoint) {
             // 删前捕获：哪些卷会被波及（在删章之前查询）
             var affectedVolIds = queryAll('SELECT DISTINCT volume_id FROM writing_chapters WHERE project_id=? AND created_at >= ?', [projectId, safeTime]);
@@ -321,7 +323,7 @@ app.post('/api/writing-projects/:id/undo-last', auth, (req, res) => {
             });
         }
         saveDB();
-        console.log('[Undo] 项目 '+projectId+' 撤回消息组+回滚 卷:'+rollback.volumes+' 章:'+rollback.chapters+' 角色:'+rollback.characters);
+        console.log('[Undo] 项目 '+projectId+' 撤回消息组+回滚 卷:'+rollback.volumes+' 章:'+rollback.chapters+' 角色:'+rollback.characters+' 爬虫书:'+rollback.crawlerBooks);
         res.json({ ok: true, deleted: 1, rollback: rollback });
     } catch(e) { console.error('[Undo] error:', e); res.status(500).json({ error: e.message }); }
 });
@@ -561,6 +563,94 @@ function _resolvePlatform(rawPlatform) {
         }
     }
     return null;
+}
+
+// 服务端解析番茄小说搜索结果HTML，提取结构化书籍数据（避免把整个HTML喂给LLM）
+function _parseSearchResultHTML(html) {
+    var books = [];
+    // 定位到书籍列表容器
+    var listMatch = html.match(/<div class="muye-search-book-list">([\s\S]*?)(?:<div class="byte-pagination|$)/i);
+    var listHtml = listMatch ? listMatch[1] : html;
+
+    // 按 search-book-item 切分每个书籍卡片
+    var items = listHtml.split(/<div class="search-book-item">/i);
+    for (var i = 1; i < items.length; i++) {
+        var item = items[i];
+        // 截取到下一个 search-book-item 或 pagination 或结束
+        var endM = item.match(/(?:<div class="search-book-item">|<div class="byte-pagination)/i);
+        if (endM) item = item.substring(0, item.indexOf(endM[0]));
+
+        var book = {};
+
+        // 书名：title div 里的 highlight-text span
+        var titleDiv = item.match(/<div class="title[^"]*">([\s\S]*?)<\/div>/i);
+        if (titleDiv) {
+            var titleSpan = titleDiv[1].match(/<span class="highlight-text">([\s\S]*?)<\/span>/i);
+            book['书名'] = titleSpan ? titleSpan[1].replace(/<[^>]+>/g, '').trim() : titleDiv[1].replace(/<[^>]+>/g, '').trim();
+        } else {
+            book['书名'] = '';
+        }
+
+        // 作者、状态、分类、字数、热度 —— 都在第一个desc div
+        var descDivs = item.match(/<div class="desc[^"]*">([\s\S]*?)<\/div>/gi);
+        if (descDivs && descDivs.length >= 1) {
+            var firstDesc = descDivs[0].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            // 作者：匹配 "作者：XXX"
+            var authorM = firstDesc.match(/作者[：:]\s*(.+?)(?:\s*·|$)/);
+            book['作者'] = authorM ? authorM[1].trim() : '';
+
+            // 状态 + 分类：在第一个 · 分隔的位置
+            var parts = firstDesc.split('·');
+            // parts[0] = "作者：XXX"
+            var metaParts = firstDesc.replace(/作者[：:]\s*.+?(?=\s*·|$)/, '').trim();
+            var metaItems = metaParts.split('·').map(function(s){return s.trim();}).filter(Boolean);
+
+            // 状态（已完结/连载中）
+            var statusM = firstDesc.match(/(已完结|连载中)/i);
+            if (statusM) {
+                if (!book['标签']) book['标签'] = [];
+                book['标签'].push(statusM[1]);
+            }
+
+            // 分类标签
+            if (metaItems.length >= 1) {
+                var catTag = metaItems[0];
+                if (catTag && ['仙侠','玄幻','都市','言情','历史','科幻','悬疑','灵异','游戏','竞技','轻小说','奇幻','武侠','军事','同人','古代','现代','穿越','重生','系统','东方','西方','脑洞','修真','洪荒','神话','搞笑','轻松','热血','暗黑','无敌','腹黑','赘婿','打脸','战神','恶搞','升级','种田','灵气','开局','抗战谍战','豪门总裁','宫斗宅斗','动漫衍生','男频衍生','文学经典','世界名著','传统玄幻','东方仙侠','奇幻仙侠','都市修真','战神赘婿','异世大陆','衍生','同人','古代言情','现代言情','悬疑灵异','盗墓','灵异'].indexOf(catTag) >= 0) {
+                    if (!book['标签']) book['标签'] = [];
+                    book['标签'].push(catTag);
+                }
+            }
+
+            // 字数和热度
+            for (var mi = 0; mi < metaItems.length; mi++) {
+                var m = metaItems[mi];
+                var wordsM = m.match(/([\d.]+万字)/);
+                if (wordsM) book['字数'] = wordsM[1];
+                var hotM = m.match(/([\d.]+万?\s*人在读|未满\d+人在读)/);
+                if (hotM) book['热度'] = hotM[1];
+            }
+        } else {
+            book['作者'] = '';
+        }
+
+        // 简介：abstract desc div
+        if (descDivs && descDivs.length >= 2) {
+            var absDesc = descDivs[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            book['简介'] = absDesc.substring(0, 500);  // 限制长度
+        } else {
+            book['简介'] = '';
+        }
+
+        if (!book['标签']) book['标签'] = [];
+        if (!book['字数']) book['字数'] = '';
+        if (!book['热度']) book['热度'] = '';
+
+        // 只保留书名或作者至少有一个的条目
+        if (book['书名'] || book['作者']) {
+            books.push(book);
+        }
+    }
+    return books;
 }
 
 // 爬取平台搜索页HTML（CDP模式 → Scrapling → 原生fetch 三级降级）
@@ -876,9 +966,68 @@ function executeToolAsync(toolName, argsJson, projectId, userId, streamCallback,
             };
             crawlWebPage(platform, keyword, onCaptcha, onCaptchaSolved).then(function(crawlResult) {
                 if (crawlResult.html && !crawlResult.error) {
-                    // HTML 获取成功 → 喂 LLM 提取
-                    var ctx3 = '目标平台：'+platform+'\n项目：'+proj3.title+'\n类型：'+(proj3.genre||'')+' '+(proj3.sub_genre||'')+'\n\n网页URL：'+crawlResult.url+'\n网页HTML：\n'+crawlResult.html;
-                    callOutlineLLM(projectId, userId, CRAWLER_SYSTEM, ctx3, 'crawler', null, function(result) {
+                    // 始终从HTML提取结构化书籍数据
+                    var parsedBooks = _parseSearchResultHTML(crawlResult.html);
+                    console.log('[Writing 爬虫] 服务端解析: '+parsedBooks.length+'本书');
+
+                    // 检测是否有乱码（PUA字符残留）
+                    var hasGarbled = false;
+                    for (var bi = 0; bi < parsedBooks.length; bi++) {
+                        if (/[-]/.test((parsedBooks[bi]['书名']||'')+(parsedBooks[bi]['作者']||'')+(parsedBooks[bi]['简介']||''))) {
+                            hasGarbled = true; break;
+                        }
+                    }
+                    console.log('[Writing 爬虫] 乱码检测: '+(hasGarbled?'有乱码→LLM校对':'无乱码→直接入库'));
+
+                    if (parsedBooks.length > 0 && !hasGarbled) {
+                        // 干净数据 → 直接入库
+                        var inserted2 = 0;
+                        parsedBooks.forEach(function(b) {
+                            try {
+                                dbRun('INSERT INTO agent_crawler_data (project_id, platform, book_name, author, cover_url, intro, tags, status, source) VALUES (?,?,?,?,?,?,?,?,?)',
+                                    [projectId, b['平台']||platform, b['书名']||'', b['作者']||'', b['封面']||'', b['简介']||'', JSON.stringify(b['标签']||[]), 'pending', 'web']);
+                                inserted2++;
+                            } catch(e) { if (e.message && e.message.indexOf('UNIQUE')>=0) console.log('[Writing 爬虫] 重复跳过: '+b['书名']); }
+                        });
+                        if (inserted2 > 0) saveDB();
+                        console.log('[Writing 爬虫] 直接入库'+inserted2+'本');
+                        resolve({ result: JSON.stringify(parsedBooks, null, 2), summary: '爬取'+inserted2+'本参考书籍' });
+                    } else if (parsedBooks.length > 0 && hasGarbled) {
+                        // 有乱码 → LLM上下文校对
+                        console.log('[Writing 爬虫] LLM校对中...');
+                        var correctionSystem = '你是文本校对助手。以下JSON是从网页提取的书籍数据，部分字符因字体反爬未能解码，显示为乱码。\n\n'
+                            + '规则：\n'
+                            + '1. 根据上下文推断并修正乱码字符（那些无法正常显示的方块字）\n'
+                            + '2. 已经正确显示的正常汉字不要改动\n'
+                            + '3. 能从片段推断出完整书名的就补全，不确定的保留片段\n'
+                            + '4. 严禁凭空编造书籍信息\n'
+                            + '5. 直接输出修正后的JSON，格式不变';
+                        var correctionData = JSON.stringify(parsedBooks, null, 2);
+                        callOutlineLLM(projectId, userId, correctionSystem, correctionData, 'crawler', null, function(result) {
+                            var correctedBooks = [];
+                            try {
+                                var clean = (result.content||'').replace(/```json\s*|\s*```/g, '').trim();
+                                var parsed = JSON.parse(clean);
+                                if (Array.isArray(parsed)) correctedBooks = parsed;
+                            } catch(e) { console.log('[Writing 爬虫] LLM校对JSON解析失败:', e.message); }
+                            if (correctedBooks.length === 0) correctedBooks = parsedBooks;  // 校对失败用原文
+                            var inserted3 = 0;
+                            correctedBooks.forEach(function(b) {
+                                try {
+                                    dbRun('INSERT INTO agent_crawler_data (project_id, platform, book_name, author, cover_url, intro, tags, status, source) VALUES (?,?,?,?,?,?,?,?,?)',
+                                        [projectId, b['平台']||platform, b['书名']||'', b['作者']||'', b['封面']||'', b['简介']||'', JSON.stringify(b['标签']||[]), 'pending', 'web']);
+                                    inserted3++;
+                                } catch(e) { if (e.message && e.message.indexOf('UNIQUE')>=0) console.log('[Writing 爬虫] 重复跳过: '+b['书名']); }
+                            });
+                            if (inserted3 > 0) saveDB();
+                            console.log('[Writing 爬虫] LLM校对完成 '+inserted3+'本');
+                            resolve({ result: JSON.stringify(correctedBooks, null, 2), summary: 'LLM校对爬取'+inserted3+'本参考书籍' });
+                        }, streamCallback);
+                    } else {
+                        // 解析为空 → 回退到LLM从原始HTML提取
+                        console.log('[Writing 爬虫] 服务端解析为空，回退LLM提取');
+                        var ctx3 = '目标平台：'+platform+'\n项目：'+proj3.title+'\n类型：'+(proj3.genre||'')+' '+(proj3.sub_genre||'')+'\n\n网页URL：'+crawlResult.url+'\n网页HTML：\n'+crawlResult.html;
+                        callOutlineLLM(projectId, userId, CRAWLER_SYSTEM, ctx3, 'crawler', null, function(result) {
                         var summary = '爬取完成'; var allBooks = [];
                         try {
                             var clean = (result.content||'').replace(/```json\s*|\s*```/g, '').trim();
@@ -916,6 +1065,7 @@ function executeToolAsync(toolName, argsJson, projectId, userId, streamCallback,
                             resolve({ result: result.content, thinking: result.thinking||'', summary: '真实爬取'+inserted+'本参考书籍' });
                         }
                     }, streamCallback);
+                    } // end else (服务端解析为空 → LLM回退)
                 } else {
                     // 第3层：网页获取失败 → 返回详细错误供前端气泡展示
                     var errDetail = crawlResult.error || '未知错误';
@@ -1148,9 +1298,18 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
         var toolLoopHeartbeat = setInterval(function() {
             try { res.write('data: {"type":"waiting"}\n\n'); } catch(e) { clearInterval(toolLoopHeartbeat); }
         }, 10000);
+        var clientGone = false; // 提前声明，工具循环和读循环共用
         var toolLoopCount = 0;
         while (toolLoopCount < 5) { // 最多5轮工具调用防无限循环
             toolLoopCount++;
+            // 检查停止标记和客户端断开
+            var stopMark = path.join(BUFFER_DIR, 'stop_'+projectId);
+            if (fs.existsSync(stopMark) || clientGone) {
+                console.log('[Write LLM] 工具循环收到停止信号或客户端断开, stopMarker='+fs.existsSync(stopMark)+' clientGone='+clientGone);
+                clearInterval(toolLoopHeartbeat);
+                try { if (fs.existsSync(stopMark)) fs.unlinkSync(stopMark); } catch(e) {}
+                break;
+            }
             var toolReqBody = { model:model, messages:toolMessages, tools:allTools, temperature:0.7, stream:false };
             console.log('[Write LLM] 工具循环轮次'+toolLoopCount+' 消息数='+toolMessages.length);
             var toolResp = await fetch(endpoint, {
@@ -1253,8 +1412,12 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     toolResult.result = _accContent;
                     toolResult.thinking = _accThinking;
                     var resultContent = toolResult.result ? (toolResult.result||'').substring(0, 500) : toolResult.summary;
-                    saveStreamBuffer(projectId, resultContent, '✅ '+toolResult.summary, streamStartedAt, 'tool_result', actualSubAgent, toolResult.result||'', toolResult.thinking||'');
-                    dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, metadata) VALUES (?,?,?,?,?)', [projectId, actualSubAgent, 'system', '✅ '+toolResult.summary, '{"type":"system"}']);
+                    var subFullResult = toolResult.result || '';
+                    var subFullThinking = toolResult.thinking || '';
+                    saveStreamBuffer(projectId, resultContent, '✅ '+toolResult.summary, streamStartedAt, 'tool_result', actualSubAgent, subFullResult, subFullThinking);
+                    // 完整结果存入DB（刷新后可恢复子智能体气泡）
+                    dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, thinking, metadata) VALUES (?,?,?,?,?,?)',
+                        [projectId, actualSubAgent, 'assistant', subFullResult, subFullThinking, '{"type":"tool_result"}']);
                     res.write('data: '+JSON.stringify({type:'tool_end',tool:toolName,subAgent:actualSubAgent,summary:toolResult.summary,content:toolResult.result||'',thinking:toolResult.thinking||''})+'\n\n');
                     toolMessages.push({ role:'tool', tool_call_id:tc.id, content:JSON.stringify(toolResult) });
                 }
@@ -1312,19 +1475,16 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                 try { res.write('data: {"type":"waiting"}\n\n'); } catch(e) { clearInterval(heartbeat); clientGone = true; }
             }, 10000);
 
-            var clientGone = false;
             // 监听连接关闭（页面刷新/关闭时最可靠的检测方式）
             req.on('close', function() {
                 if (!clientGone) {
                     clientGone = true;
                     clearInterval(heartbeat);
-                    console.log('[Write LLM] 客户端断开（req.close），转入后台模式');
+                    console.log('[Write LLM] 客户端断开（req.close），停止流式');
                 }
             });
             console.log('[Write LLM] 进入读循环');
             while (true) {
-                var chunk = await reader.read();
-                chunkCount++;
                 // 检查停止标记（用户从新页面点击了停止）
                 var stopMarker = path.join(BUFFER_DIR, 'stop_'+projectId);
                 if (fs.existsSync(stopMarker)) {
@@ -1334,6 +1494,15 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     try { fs.unlinkSync(stopMarker); } catch(e) {}
                     return;
                 }
+                // 检查客户端是否已断开（刷新/关闭页面后不继续浪费资源）
+                if (clientGone) {
+                    console.log('[Write LLM] 客户端已断开，终止读循环');
+                    reader.cancel();
+                    clearInterval(heartbeat);
+                    return;
+                }
+                var chunk = await reader.read();
+                chunkCount++;
                 if (chunk.done) { console.log('[Write LLM] DeepSeek流结束 chunkCount='+chunkCount); break; }
 
                 buf += decoder.decode(chunk.value, { stream:true });
