@@ -2,6 +2,7 @@ console.log("=== write.js v20260523_undo 已加载 ===");
 
 // ===== 开发者日志系统（前台console拦截） =====
 var _devLogLines = [], _devLogSse = null, _devLogAutoScroll = true;
+var _renderCallCount = 0; // renderAgentMessages调用计数器（去重诊断用）
 var _origConsole = { log: console.log, warn: console.warn, error: console.error };
 function _devLogAdd(level, source, msg) {
   var entry = { ts: new Date().toISOString(), source: source, level: level, msg: String(msg) };
@@ -1081,10 +1082,8 @@ var DL = {
     if (drawer && drawer.classList.contains('open')) DL.close(); else DL.open();
   },
   clear: function() {
-    _devLogLines = [];
-    var body = document.getElementById('devLogBody');
-    if (body) body.innerHTML = '';
-    DL._updateCount();
+    var inp = document.getElementById('dlSearch');
+    if (inp) { inp.value = ''; DL.filter(); }
   },
   filter: function() {
     var lv = document.getElementById('dlFilter').value;
@@ -1284,6 +1283,23 @@ function handleInputKey(e) {
 }
 
 // ===== Markdown formatting =====
+function _renderToolResult(rawText) {
+  // JSON数组 → Markdown表格；非JSON → 原样渲染
+  if (rawText && rawText.trim()[0] === '[') {
+    try {
+      var books = JSON.parse(rawText);
+      if (Array.isArray(books) && books.length > 0) {
+        var tbl = '| 书名 | 作者 | 标签 | 字数 |\n|------|------|------|------|\n';
+        books.forEach(function(b) {
+          tbl += '| '+escHtml(b['书名']||'')+' | '+escHtml(b['作者']||'')+' | '+escHtml((b['标签']||[]).join(' '))+' | '+escHtml(b['字数']||'')+' |\n';
+        });
+        return formatAgentContent(tbl);
+      }
+    } catch(e) {}
+  }
+  return formatAgentContent(rawText);
+}
+
 function formatAgentContent(text) {
   if (!text) return '';
   var codeBlocks = [];
@@ -1446,8 +1462,13 @@ function renderSingleMsg(m) {
   }
   var avatar=getAgentIcon(m.agent);
   var idx = agentMsgs.indexOf(m);
-  var parsed = parseOptBtns(m.content, m.agent, m.pickedOption);
-  var contentHtml = parsed.html + parsed.btns;
+  var contentHtml;
+  if (m.type === 'tool_result' && m.content && m.content.trim()[0] === '[') {
+    contentHtml = _renderToolResult(m.content);
+  } else {
+    var parsed = parseOptBtns(m.content, m.agent, m.pickedOption);
+    contentHtml = parsed.html + parsed.btns;
+  }
   var h='<div class="msg agent-msg" data-msg-idx="'+idx+'"><div class="avatar" style="font-size:17px;">'+avatar+'</div><div class="bubble">';
   h+='<div style="font-size:11px;color:var(--accent);padding:4px;margin:-4px 0 -6px -4px;cursor:pointer;display:inline-block;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
   if(m.thinking){h+='<span class="think-toggle" onclick="var b=this.nextElementSibling;b.classList.toggle(\'show\');this.textContent=b.classList.contains(\'show\')?\'💭 收起思考\':\'💭 思考过程\'">💭 思考过程</span>';h+='<div class="think-body">'+formatAgentContent(m.thinking)+'</div>';}
@@ -1486,6 +1507,9 @@ function renderPendingAgent() {
 
 var _renderRetryCount = 0;
 function renderAgentMessages() {
+  _renderCallCount = (_renderCallCount || 0) + 1; var _renderCallId = _renderCallCount;
+  console.log('[去重·Render] 第'+_renderCallId+'次调用 renderAgentMessages agentMsgs.length='+agentMsgs.length+' _toolStreamEl='+!!_toolStreamEl);
+
   var container=document.getElementById('subPanelChat');
   console.log('[Render] container='+!!container+' agentMsgs.length='+agentMsgs.length+' agentBusy='+agentBusy+' pendingAgent='+!!pendingAgent);
   if(!container){
@@ -1499,6 +1523,7 @@ function renderAgentMessages() {
   var wasAtBottom=container.scrollHeight-container.scrollTop-container.clientHeight<60;
   if(!agentMsgs.length){container.innerHTML='<div class="ap-loading">暂无对话记录<br><span style="font-size:11px;color:var(--text2);">在下方输入消息开始创作</span></div>';unreadCount=0;updateUnreadBadge();return;}
   var html='';
+  var _renderedToolTypes = {}; // 去重：同类型tool_result只渲染一次
   agentMsgs.forEach(function(m, i) {
     var t = m.time ? '<div class="msg-time">'+fmtTime(m.time)+'</div>' : '';
     if(m.type==='undo_notice'){
@@ -1511,9 +1536,22 @@ function renderAgentMessages() {
       html+='<div class="msg user-msg" data-msg-idx="'+i+'"><div class="avatar" style="background:rgba(5,163,197,0.12);">👤</div><div class="bubble" onmousedown="if(event.button===2){event.preventDefault();event.stopPropagation()}" oncontextmenu="event.preventDefault();showUserCtxMenu(event,'+i+')">'+escHtml(m.content)+t+'</div></div>';
     }
     else {
+      // 去重：tool_result/undefined按agent只渲染一次；chat类型若已有tool_result也跳过（防服务端重复插入）
+	      if (m.agent && (m.type === 'tool_result' || m.type === undefined)) {
+	        console.log('[去重·Render] 消息#'+i+' type='+m.type+' agent='+m.agent+' _renderedToolTypes['+m.agent+']='+(_renderedToolTypes[m.agent]||'undefined')+' content前30='+(m.content||'').substring(0,30));
+	        if (_renderedToolTypes[m.agent]) { console.log('[去重·Render] skip dup agent='+m.agent); return; }
+	        _renderedToolTypes[m.agent] = true; console.log('[去重·Render] first render tool_result agent='+m.agent);
+	      } else if (m.agent && m.type === 'chat' && _renderedToolTypes[m.agent]) {
+	        console.log('[去重·Render] skip chat agent='+m.agent+' (has tool_result)'); return;
+	      }
       var avatar=getAgentIcon(m.agent);
-      var parsed = parseOptBtns(m.content, m.agent, m.pickedOption);
-  var contentHtml = parsed.html + parsed.btns;
+      var contentHtml;
+      if (m.content && m.content.trim()[0] === '[') {
+        contentHtml = _renderToolResult(m.content);
+      } else {
+        var parsed = parseOptBtns(m.content, m.agent, m.pickedOption);
+        contentHtml = parsed.html + parsed.btns;
+      }
       html+='<div class="msg agent-msg" data-msg-idx="'+i+'"><div class="avatar" style="font-size:17px;">'+avatar+'</div><div class="bubble">';
       html+='<div style="font-size:11px;color:var(--accent);padding:4px;margin:-4px 0 -6px -4px;cursor:pointer;display:inline-block;" title="点击改名" onclick="event.stopPropagation();renameAgent(\''+escHtml(m.agent||'agent')+'\')">'+escHtml(getAgentName(m.agent))+'</div>';
       if(m.thinking){html+='<span class="think-toggle" onclick="var b=this.nextElementSibling;b.classList.toggle(\'show\');this.textContent=b.classList.contains(\'show\')?\'💭 收起思考\':\'💭 思考过程\'">💭 思考过程</span>';html+='<div class="think-body">'+formatAgentContent(m.thinking)+'</div>';}
@@ -1523,6 +1561,8 @@ function renderAgentMessages() {
   if(pendingAgent){var pa=pendingAgent;html+='<div class="msg agent-msg"><div class="avatar" style="font-size:17px;background:rgba(5,163,197,0.15);">'+pa.icon+'</div><div class="bubble"><div style="font-size:11px;color:var(--accent);margin-bottom:2px;">'+escHtml(pa.label||pa.agent)+'</div><span class="typing-dots"><b></b><b></b><b></b></span></div></div>';}
   html+='<div class="msg msg-sentinel" style="height:1px;flex-shrink:0;opacity:0;pointer-events:none;"></div>';
   container.innerHTML='<div class="msg-inner">'+html+'</div>';
+  // innerHTML替换后旧_toolStreamEl引用已脱离DOM，必须置空防止后续误操作
+  if (_toolStreamEl) { console.log('[去重·Render] innerHTML已替换，置空悬空的_toolStreamEl (was agent='+_toolStreamAgent+')'); _toolStreamEl = null; _toolStreamAgent = null; }
   console.log('[Render] innerHTML已设置 DOM消息数='+container.querySelectorAll('.msg').length+' html长度='+html.length);
   // 检查可见性：offsetHeight/Width + 父元素链
   var rect=container.getBoundingClientRect();
@@ -2641,13 +2681,20 @@ function pollStreamBuffer() {
           if (sentinel) sentinel.insertAdjacentHTML('beforebegin', '<div class="msg system-msg"><span class="sys-text">'+escHtml(sysText)+'</span></div>');
         }
       }
-      // 创建子智能体流式气泡（独立于调配师静态消息）
-      // 检查DB历史：如果该智能体已有回复，跳过避免重复气泡
-      var _lastUserIdx = -1;
-      for (var _li = agentMsgs.length - 1; _li >= 0; _li--) { if (agentMsgs[_li].role === 'user') { _lastUserIdx = _li; break; } }
-      var _hasReply = false;
-      for (var _lj = _lastUserIdx + 1; _lj < agentMsgs.length; _lj++) { if (agentMsgs[_lj].agent === agentType && agentMsgs[_lj].role === 'assistant') { _hasReply = true; break; } }
-      if (!_hasReply) {
+      // 创建子智能体流式气泡：先查DOM去重再查agentMsgs
+      var _alreadyInDom2 = false;
+      var _abName = getAgentName(agentType);
+      var _abBubbles = document.querySelectorAll('#subPanelChat .msg.agent-msg:not(.msg-streaming)');
+      for (var _abi = 0; _abi < _abBubbles.length; _abi++) {
+        var _abl = _abBubbles[_abi].querySelector('[onclick*=\"renameAgent\"]');
+        if (_abl && _abl.textContent.trim() === _abName) { _alreadyInDom2 = true; break; }
+      }
+      if (!_alreadyInDom2) {
+        var _lastUserIdx = -1;
+        for (var _li = agentMsgs.length - 1; _li >= 0; _li--) { if (agentMsgs[_li].role === 'user') { _lastUserIdx = _li; break; } }
+        var _hasReply = false;
+        for (var _lj = _lastUserIdx + 1; _lj < agentMsgs.length; _lj++) { if (agentMsgs[_lj].agent === agentType && agentMsgs[_lj].role === 'assistant') { _hasReply = true; break; } }
+        if (!_hasReply) {
         _ensureToolBubble(agentType);
         // 仅正文存在时才恢复（思维链未完成时不显示，碎碎念继续播）
         if (buf.subContent && _toolStreamEl) {
@@ -2663,6 +2710,9 @@ function pollStreamBuffer() {
           _startPhraseRotation();
         }
       }
+      } else {
+        _closeToolBubble(); // DOM已有该agent气泡
+      }
       _bufPollTimer = setTimeout(pollStreamBuffer, 2000);
       return;
     }
@@ -2671,42 +2721,57 @@ function pollStreamBuffer() {
     if (phase === 'tool_result') {
       _bufActive = true; setBusyUI(true);
       _currentStreamAgent = agentType;
-      // 同上：检查是否已有回复
-      var _lu2 = -1;
-      for (var _lk = agentMsgs.length - 1; _lk >= 0; _lk--) { if (agentMsgs[_lk].role === 'user') { _lu2 = _lk; break; } }
-      var _hr2 = false;
-      for (var _ll = _lu2 + 1; _ll < agentMsgs.length; _ll++) { if (agentMsgs[_ll].agent === agentType && agentMsgs[_ll].role === 'assistant') { _hr2 = true; break; } }
-      if (!_hr2) _ensureToolBubble(agentType);
-      _stopPhraseRotation();
-      // 恢复子智能体思维链（缓冲中的完整内容）
-      if (buf.subThinking && _toolStreamEl) {
-        var tBody2 = _toolStreamEl.querySelector('.stream-think-body');
-        if (tBody2) tBody2.innerHTML = escHtml(replaceAgentPlaceholders(buf.subThinking)).replace(/\n/g,'<br>');
-        var tLabel = _toolStreamEl.querySelector('.toggle-label');
-        if (tLabel) tLabel.textContent = '💭 思考过程';
-      } else if (buf.thinking && _toolStreamEl) {
-        var tBody2 = _toolStreamEl.querySelector('.stream-think-body');
-        if (tBody2) tBody2.innerHTML = escHtml(replaceAgentPlaceholders(buf.thinking));
-        var tLabel = _toolStreamEl.querySelector('.toggle-label');
-        if (tLabel) tLabel.textContent = '💭 结果摘要';
+      // 去重：先查DOM（无竞态），再查agentMsgs
+      var _alreadyInDom = false;
+      var _existingBubbles = document.querySelectorAll('#subPanelChat .msg.agent-msg:not(.msg-streaming)');
+      var _agentName = getAgentName(agentType);
+      for (var _bi = 0; _bi < _existingBubbles.length; _bi++) {
+        var _lbl = _existingBubbles[_bi].querySelector('[onclick*=\"renameAgent\"]');
+        if (_lbl && _lbl.textContent.trim() === _agentName) { _alreadyInDom = true; break; }
       }
-      // 恢复子智能体正文
-      if (buf.subContent && _toolStreamEl) {
-        var tContent = _toolStreamEl.querySelector('.stream-content');
-        if (tContent) {
-          tContent.style.display = '';
-          tContent.innerHTML = formatAgentContent(replaceAgentPlaceholders(buf.subContent));
+      if (!_alreadyInDom) {
+        var _lu2 = -1;
+        for (var _lk = agentMsgs.length - 1; _lk >= 0; _lk--) { if (agentMsgs[_lk].role === 'user') { _lu2 = _lk; break; } }
+        var _hr2 = false;
+        for (var _ll = _lu2 + 1; _ll < agentMsgs.length; _ll++) { if (agentMsgs[_ll].agent === agentType && agentMsgs[_ll].role === 'assistant') { _hr2 = true; break; } }
+        if (!_hr2) _ensureToolBubble(agentType);
+        _stopPhraseRotation();
+        // 恢复子智能体思维链（缓冲中的完整内容）
+        if (buf.subThinking && _toolStreamEl) {
+          var tBody2 = _toolStreamEl.querySelector('.stream-think-body');
+          if (tBody2) tBody2.innerHTML = escHtml(replaceAgentPlaceholders(buf.subThinking)).replace(/\n/g,'<br>');
+          var tLabel = _toolStreamEl.querySelector('.toggle-label');
+          if (tLabel) tLabel.textContent = '💭 思考过程';
+        } else if (buf.thinking && _toolStreamEl) {
+          var tBody2 = _toolStreamEl.querySelector('.stream-think-body');
+          if (tBody2) tBody2.innerHTML = escHtml(replaceAgentPlaceholders(buf.thinking));
+          var tLabel = _toolStreamEl.querySelector('.toggle-label');
+          if (tLabel) tLabel.textContent = '💭 结果摘要';
         }
-      } else if (buf.content && _toolStreamEl) {
-        var tContent = _toolStreamEl.querySelector('.stream-content');
-        if (tContent) {
-          tContent.style.display = '';
-          tContent.innerHTML = formatAgentContent(replaceAgentPlaceholders(buf.content));
+        // 恢复子智能体正文（JSON→表格渲染）
+        if (buf.subContent && _toolStreamEl) {
+          var tContent = _toolStreamEl.querySelector('.stream-content');
+          if (tContent) {
+            tContent.style.display = '';
+            var _subRaw = replaceAgentPlaceholders(buf.subContent);
+            tContent.innerHTML = _renderToolResult(_subRaw);
+          }
+        } else if (buf.content && _toolStreamEl) {
+          var tContent = _toolStreamEl.querySelector('.stream-content');
+          if (tContent) {
+            tContent.style.display = '';
+            tContent.innerHTML = formatAgentContent(replaceAgentPlaceholders(buf.content));
+          }
         }
+        _toolSysPhase = ''; // 重置，允许下次tool_calling再发系统消息
+        _bufPollTimer = setTimeout(pollStreamBuffer, 1000);
+        return;
+      } else {
+        _closeToolBubble(); console.log('[去重·Poll] tool_result阶段DOM已有'+agentType+'气泡，stopBufferPolling停止轮询'); // DOM已有该agent气泡，停止轮询避免无效请求
+        _toolSysPhase = '';
+        stopBufferPolling();
+        return;
       }
-      _toolSysPhase = ''; // 重置，允许下次tool_calling再发系统消息
-      _bufPollTimer = setTimeout(pollStreamBuffer, 1000);
-      return;
     }
 
     // === 默认阶段（thinking/streaming/final）: 主智能体流式气泡 ===
@@ -2823,7 +2888,13 @@ function _stopPhraseRotation() {
 // 子智能体流式气泡辅助函数
 function _ensureToolBubble(agentType) {
   if (_toolStreamEl && _toolStreamAgent === agentType) return;
-  // 去重：检查DOM中是否已有该智能体的非流式气泡（由 renderAgentMessages 从DB渲染）
+  // 去重1：检查agentMsgs内存数组（比DOM查询更可靠，不受innerHTML替换影响）
+  for (var _mi = agentMsgs.length - 1; _mi >= 0; _mi--) {
+    if (agentMsgs[_mi].agent === agentType && agentMsgs[_mi].type === 'tool_result') {
+      _toolStreamAgent = agentType; console.log('[去重·Bubble] agentMsgs已有 '+agentType+' 的tool_result，跳过创建流式气泡'); return;
+    }
+  }
+  // 去重2：检查DOM中是否已有该智能体的非流式气泡（由 renderAgentMessages 从DB渲染）
   var agentName = getAgentName(agentType);
   var existing = document.querySelectorAll('#subPanelChat .msg.agent-msg:not(.msg-streaming):not(.msg-tool-stream)');
   for (var _bi = 0; _bi < existing.length; _bi++) {
@@ -2986,8 +3057,20 @@ function stopBufferPolling() {
 api('GET','/writing-projects').then(function(projects){var p=projects?projects.find(function(x){return x.id===projectId;}):null;if(!p){window.location.replace('/projects.html');return;}writingData.title=p.title;});
 
 // 加载历史对话
-api('GET','/writing-projects/'+projectId+'/conversations').then(function(msgs){agentMsgs=[];var savedOpts=loadPickedOptions();if(msgs&&msgs.length){msgs.forEach(function(m,i){var meta={};try{meta=JSON.parse(m.metadata||'{}');}catch(e){}var createdTs=m.created_at?Date.parse(m.created_at):NaN;var msgTime=isNaN(createdTs)?Date.now():createdTs;var msg={type:meta.type,time:msgTime,role:m.role,agent:m.agent_type,content:m.content,thinking:m.thinking||''};console.log('[Init] msg['+i+'] role='+m.role+' agent='+m.agent_type+' type='+meta.type+' content前50字='+(m.content||'').substring(0,50));if(m.agent_type==='orchestrator'&&savedOpts[m.content]){msg.pickedOption=savedOpts[m.content];}agentMsgs.push(msg);});console.log('[Write] 已加载 '+msgs.length+' 条历史对话');}else{console.log('[Write] 该项目暂无历史对话');}renderAgentMessages();console.log('[Init] renderAgentMessages后 DOM消息数='+document.querySelectorAll('#subPanelChat .msg').length);// 检测是否有中断的流式回复 → 启动缓冲轮询
-var lastMsg=agentMsgs.length>0?agentMsgs[agentMsgs.length-1]:null;console.log('[Init] 历史加载完成 msgs='+agentMsgs.length+' lastRole='+(lastMsg?lastMsg.role:'none')+' lastType='+(lastMsg?lastMsg.type:'none'));if(lastMsg&&(lastMsg.role==='user'||lastMsg.type==='system')){console.log('[Init] 启动双重轮询机制（末条role='+lastMsg.role+' type='+lastMsg.type+'）');simpleRetryReload(agentMsgs.length, 0);pollStreamBuffer();}
+api('GET','/writing-projects/'+projectId+'/conversations').then(function(msgs){agentMsgs=[];var savedOpts=loadPickedOptions();if(msgs&&msgs.length){msgs.forEach(function(m,i){var meta={};try{meta=JSON.parse(m.metadata||'{}');}catch(e){}var createdTs=m.created_at?Date.parse(m.created_at):NaN;var msgTime=isNaN(createdTs)?Date.now():createdTs;var msg={type:meta.type,time:msgTime,role:m.role,agent:m.agent_type,content:m.content,thinking:m.thinking||''};console.log('[Init] msg['+i+'] role='+m.role+' agent='+m.agent_type+' type='+meta.type+' content前50字='+(m.content||'').substring(0,50));if(m.agent_type==='orchestrator'&&savedOpts[m.content]){msg.pickedOption=savedOpts[m.content];}agentMsgs.push(msg);});console.log('[Write] 已加载 '+msgs.length+' 条历史对话');}else{console.log('[Write] 该项目暂无历史对话');}renderAgentMessages();console.log('[Init] renderAgentMessages后 DOM消息数='+document.querySelectorAll('#subPanelChat .msg').length);
+	// 关键修复：先查流式缓冲是否残留，若其数据已在agentMsgs中则跳过轮询，防止双气泡
+	api('GET','/writing-projects/'+projectId+'/stream-buffer').then(function(buf){var _toolAgentsInDB=[];agentMsgs.forEach(function(m){if(m.type==='tool_result'&&m.agent&&_toolAgentsInDB.indexOf(m.agent)<0)_toolAgentsInDB.push(m.agent);});console.log('[去重·Init] DB中已有tool_result的智能体:['+_toolAgentsInDB.join(',')+'] 共'+agentMsgs.length+'条消息');console.log('[去重·Init] 缓冲检查 phase='+(buf&&buf.phase)+' agent='+(buf&&buf.agentType)+' subContent长度='+(buf&&buf.subContent?buf.subContent.length:0)+' startedAt='+(buf&&buf.startedAt?(new Date(buf.startedAt)).toLocaleTimeString():'none'));
+		var bufAlreadyInDB = false;
+		if (buf && (buf.phase==='tool_calling'||buf.phase==='tool_result') && buf.agentType) {
+			bufAlreadyInDB = agentMsgs.some(function(m){ return m.agent===buf.agentType && m.type==='tool_result'; });
+			if (bufAlreadyInDB) console.log('[去重·Init] ✓ 缓冲数据已在DB中，跳过轮询防止双气泡 (agent='+buf.agentType+')');
+			else console.log('[去重·Init] ✗ 缓冲agent='+buf.agentType+' 不在DB中或非tool_result，允许轮询');
+		}
+		if (!bufAlreadyInDB) {
+			var lastMsg=agentMsgs.length>0?agentMsgs[agentMsgs.length-1]:null;console.log('[Init] 历史加载完成 msgs='+agentMsgs.length+' lastRole='+(lastMsg?lastMsg.role:'none')+' lastType='+(lastMsg?lastMsg.type:'none'));
+			if(lastMsg&&(lastMsg.role==='user'||lastMsg.type==='system')){console.log('[Init] 启动双重轮询机制');simpleRetryReload(agentMsgs.length, 0);pollStreamBuffer();}
+		}
+	});
 requestAnimationFrame(function(){requestAnimationFrame(function(){var c=document.getElementById('subPanelChat');if(c){c.scrollTop=c.scrollHeight;markAllRead();}});});}).catch(function(err){console.error('[Write] 加载历史对话失败:',err);renderAgentMessages();});
 
 loadOutline(); loadTokenStats();
