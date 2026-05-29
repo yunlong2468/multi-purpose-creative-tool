@@ -1948,6 +1948,7 @@ function setBusyUI(busy) {
   if(send)send.style.display=busy?'none':'';
   if(stop)stop.style.display=busy?'':'none';
   if(inp){inp.disabled=busy;inp.style.opacity=busy?'0.4':'';}
+  if(!busy) setTimeout(function(){ loadTokenStats(); }, 500); // 完成后刷新token统计
 }
 
 function stopAgentCall() {
@@ -2559,7 +2560,7 @@ function generateCharacters() {
 }
 
 // ==================== Token ====================
-function loadTokenStats(){api('GET','/writing-projects/'+projectId+'/token-stats').then(function(stats){if(!stats)return;var el=document.getElementById('tokenToday');if(el)el.textContent=(stats.today||0).toLocaleString();var c=document.getElementById('tokenChart');if(c)c.textContent='今日'+stats.model+': '+stats.today.toLocaleString()+' tokens'+(stats.cost?'\n预估费用: ¥'+stats.cost.toFixed(2):'');var ct=document.getElementById('tokenCost');if(ct)ct.textContent='输入:¥'+stats.inputPrice+'/百万 | 输出:¥'+stats.outputPrice+'/百万';}).catch(function(e){console.error('[Write] Token加载失败:',e);});}
+function loadTokenStats(){api('GET','/writing-projects/'+projectId+'/token-stats').then(function(stats){if(!stats)return;var el=document.getElementById('tokenToday');if(el)el.textContent=(stats.today||0).toLocaleString()+' tk';var c=document.getElementById('tokenChart');if(c){c.innerHTML='今日 '+stats.model+'<br>输入: '+(stats.todayIn||0).toLocaleString()+' | 输出: '+(stats.todayOut||0).toLocaleString()+(stats.todayCache?' | 缓存: '+(stats.todayCache||0).toLocaleString():'');}var ct=document.getElementById('tokenCost');if(ct)ct.innerHTML='今日费用: ¥'+(stats.cost||0).toFixed(4)+(stats.allTime?'<br>累计: '+(stats.allTime||0).toLocaleString()+' tokens':'');}).catch(function(e){console.error('[Write] Token加载失败:',e);});}
 
 // ==================== 新保存系统 ====================
 var _autoSaveTimer = null, _autoSaveMin = 10; // 10分钟自动保存
@@ -3393,16 +3394,29 @@ document.addEventListener('click', function(e) {
   }
 });
 
-// Token估算：中文字数×2.5 + 蓝图 + 系统提示词固定开销
+// Token估算：中文约0.7token/字，英文约0.25token/字，JSON结构约0.3token/字
 function _estimateContextTokens() {
-  var tokens = 3000; // 系统提示词
-  tokens += JSON.stringify(_storySeed || {}).length * 1.2; // 故事蓝图
-  // 对话历史
+  var tokens = 3000; // 系统提示词(固定开销)
+  tokens += JSON.stringify(_storySeed || {}).length * 0.3; // 故事蓝图(JSON)
   agentMsgs.forEach(function(m) {
-    tokens += (m.content || '').length * 2.5;
-    tokens += (m.thinking || '').length * 2.5;
+    tokens += _countTokens(m.content || '');
+    tokens += _countTokens(m.thinking || '');
   });
   return Math.round(tokens);
+}
+
+// 混合文本token计数：中文0.8/字 + 英文0.25/字
+function _countTokens(text) {
+  var cjk = 0, other = 0;
+  for (var i = 0; i < text.length; i++) {
+    var c = text.charCodeAt(i);
+    if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0x20000 && c <= 0x2FFFF)) {
+      cjk++;
+    } else {
+      other++;
+    }
+  }
+  return cjk * 0.75 + other * 0.25;
 }
 
 function stopBufferPolling() {
@@ -3565,7 +3579,7 @@ var _pendingCheckpoint = null; // {msgIdx, cpType, cpData, msgId}
 // ==================== SSE ====================
 (function(){var sse=new EventSource('/api/sse?token='+encodeURIComponent(token));sse.addEventListener('message',function(e){try{var d=JSON.parse(e.data);if(d.type==='kicked'){localStorage.removeItem('canvas_token');localStorage.removeItem('canvas_username');window.location.replace('/login.html?reason=kicked');}}catch(ex){}});sse.onerror=function(){console.log('[Write] 踢出SSE断线，自动重连中...');};})();
 
-(function(){var sseUrl='/api/write-sse?projectId='+projectId+'&token='+encodeURIComponent(token);var sse=new EventSource(sseUrl);sse.addEventListener('message',function(e){try{var d=JSON.parse(e.data);if(d.type==='connected'){console.log('[Write] SSE已连接 projectId='+d.projectId);_updateOnlineCount();return;}if(d.type==='reload-chat'||d.type==='stream-done'){console.log('[Write] SSE触发reload-chat');reloadHistoryFromDB();return;}if(d.type==='agent-message'&&d.msg){if(!agentBusy){var sseMsg={type:'chat',role:'assistant',time:Date.now(),agent:d.msg.agent_type,content:d.msg.content,thinking:d.msg.thinking||''};agentMsgs.push(sseMsg);appendMsgToDOM(renderSingleMsg(sseMsg));CTX_RING.update();scrollToBottomIfAtBottom();}}}catch(ex){}});sse.onerror=function(){console.log('[Write] Agent SSE断线，自动重连中...');};window._writeSse=sse;})();
+(function(){var sseUrl='/api/write-sse?projectId='+projectId+'&token='+encodeURIComponent(token);var sse=new EventSource(sseUrl);sse.addEventListener('message',function(e){try{var d=JSON.parse(e.data);if(d.type==='connected'){console.log('[Write] SSE已连接 projectId='+d.projectId);_updateOnlineCount();return;}if(d.type==='reload-chat'||d.type==='stream-done'){console.log('[Write] SSE触发reload-chat');reloadHistoryFromDB();loadTokenStats();return;}if(d.type==='agent-message'&&d.msg){if(!agentBusy){var sseMsg={type:'chat',role:'assistant',time:Date.now(),agent:d.msg.agent_type,content:d.msg.content,thinking:d.msg.thinking||''};agentMsgs.push(sseMsg);appendMsgToDOM(renderSingleMsg(sseMsg));CTX_RING.update();scrollToBottomIfAtBottom();}}}catch(ex){}});sse.onerror=function(){console.log('[Write] Agent SSE断线，自动重连中...');};window._writeSse=sse;})();
 
 // 页面刷新/关闭前通知后端终止SSE连接（让后端检测req.aborted并转入后台）
 

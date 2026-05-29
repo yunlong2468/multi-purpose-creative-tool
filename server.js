@@ -1188,7 +1188,7 @@ function _callSubAgentLLM(projectId, userId, messages, agentType, tools, streamC
     var isDS = model.toLowerCase().indexOf('deepseek') >= 0;
     console.log('[SubAgent '+agentType+'] 调用 model='+model+' 消息数='+messages.length);
 
-    var reqBody = { model: model, messages: messages, temperature: 0.6, stream: true };
+    var reqBody = { model: model, messages: messages, temperature: 0.6, stream: true, stream_options: { include_usage: true } };
     if (isDS) { reqBody.thinking = { type: 'enabled' }; reqBody.reasoning_effort = 'max'; }
     if (tools && tools.length) reqBody.tools = tools;
 
@@ -1199,7 +1199,7 @@ function _callSubAgentLLM(projectId, userId, messages, agentType, tools, streamC
         if (!r.ok) return r.text().then(function(t) { callback({ error: 'HTTP '+r.status+': '+t.substring(0,200) }); });
         var reader = r.body.getReader();
         var decoder = new TextDecoder();
-        var buf = '', fullContent = '', fullThinking = '', tokIn = 0, tokOut = 0;
+        var buf = '', fullContent = '', fullThinking = '', tokIn = 0, tokOut = 0, tokCache = 0;
         var fullToolCalls = [];
         function pump() {
             reader.read().then(function(chunk) {
@@ -1214,12 +1214,12 @@ function _callSubAgentLLM(projectId, userId, messages, agentType, tools, streamC
                         if (fullThinking) assistantMsg.reasoning_content = fullThinking;
                         assistantMsg.tool_calls = validCalls;
                         messages.push(assistantMsg);
-                        dbRun('INSERT INTO token_usage_logs (user_id, project_id, agent_type, model, input_tokens, output_tokens) VALUES (?,?,?,?,?,?)', [userId, projectId, agentType, model, tokIn, tokOut]);
+                        _logTokenUsage(userId, projectId, agentType, model, tokIn, tokOut, tokCache);
                         saveDB();
                         callback({ content: fullContent, thinking: fullThinking, tool_calls: validCalls, _messages: messages, token_in: tokIn, token_out: tokOut });
                     } else {
                         // 无工具请求 → 保存DB，正常完成
-                        dbRun('INSERT INTO token_usage_logs (user_id, project_id, agent_type, model, input_tokens, output_tokens) VALUES (?,?,?,?,?,?)', [userId, projectId, agentType, model, tokIn, tokOut]);
+                        _logTokenUsage(userId, projectId, agentType, model, tokIn, tokOut, tokCache);
                         saveDB();
                         callback({ content: fullContent, thinking: fullThinking, tool_calls: [], _messages: messages, token_in: tokIn, token_out: tokOut });
                     }
@@ -1234,7 +1234,7 @@ function _callSubAgentLLM(projectId, userId, messages, agentType, tools, streamC
                     if (raw === '[DONE]') continue;
                     try {
                         var parsed = JSON.parse(raw);
-                        if (parsed.usage) { tokIn = parsed.usage.prompt_tokens || 0; tokOut = parsed.usage.completion_tokens || 0; }
+                        if (parsed.usage) { tokIn = parsed.usage.prompt_tokens || 0; tokOut = parsed.usage.completion_tokens || 0; tokCache = (parsed.usage.prompt_tokens_details && parsed.usage.prompt_tokens_details.cached_tokens) || 0; }
                         var delta = (parsed.choices && parsed.choices[0]) ? parsed.choices[0].delta : null;
                         if (!delta) continue;
                         if (delta.reasoning_content) {
@@ -1877,7 +1877,7 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
         // 将工具消息合并回msgs用于后续流式
         msgs = toolMessages;
 
-        var streamReqBody = { model:model, messages:msgs, stream:true, temperature:0.7 };
+        var streamReqBody = { model:model, messages:msgs, stream:true, temperature:0.7, stream_options: { include_usage: true } };
 
         try {
             var fetchStart = Date.now();
@@ -1901,7 +1901,7 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
             var buf = '';
             var fullContent = '';
             var fullThinking = '';
-            var tokIn = 0, tokOut = 0;
+            var tokIn = 0, tokOut = 0, tokCache = 0;
             var chunkCount = 0;
 
             // 心跳保活（10秒间隔）；若写入失败说明客户端已断开→转入后台模式
@@ -1968,6 +1968,7 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                         if (parsed.usage) {
                             tokIn = parsed.usage.prompt_tokens || 0;
                             tokOut = parsed.usage.completion_tokens || 0;
+                            tokCache = (parsed.usage.prompt_tokens_details && parsed.usage.prompt_tokens_details.cached_tokens) || 0;
                         }
                     } catch(e) {}
                 }
@@ -1979,8 +1980,7 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
             if (fullContent || fullThinking) {
                 dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, thinking, token_used) VALUES (?,?,?,?,?,?)',
                     [projectId, 'orchestrator', 'assistant', fullContent, fullThinking, tokIn+tokOut]);
-                dbRun('INSERT INTO token_usage_logs (user_id, project_id, agent_type, model, input_tokens, output_tokens) VALUES (?,?,?,?,?,?)',
-                    [req.userId, projectId, 'orchestrator', model, tokIn, tokOut]);
+                _logTokenUsage(req.userId, projectId, 'orchestrator', model, tokIn, tokOut, tokCache);
                 saveDB();
             }
 
@@ -2031,12 +2031,12 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
         if (!reply) { console.log('[Write LLM] 空响应'); reply='（模型未返回内容，请重试）'; }
         var tokIn = (d.usage && d.usage.prompt_tokens)||0;
         var tokOut = (d.usage && d.usage.completion_tokens)||0;
-        console.log('[Write LLM] 回复长度='+reply.length+' tokens in='+tokIn+' out='+tokOut);
+        var tokCache = (d.usage && d.usage.prompt_tokens_details && d.usage.prompt_tokens_details.cached_tokens)||0;
+        console.log('[Write LLM] 回复长度='+reply.length+' tokens in='+tokIn+' out='+tokOut+(tokCache?' cache='+tokCache:''));
 
         dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, thinking, token_used) VALUES (?,?,?,?,?,?)',
             [projectId, 'orchestrator', 'assistant', reply, thinking||'', tokIn+tokOut]);
-        dbRun('INSERT INTO token_usage_logs (user_id, project_id, agent_type, model, input_tokens, output_tokens) VALUES (?,?,?,?,?,?)',
-            [req.userId, projectId, 'orchestrator', model, tokIn, tokOut]);
+        _logTokenUsage(req.userId, projectId, 'orchestrator', model, tokIn, tokOut, tokCache);
         saveDB();
 
         res.json({ content:reply, thinking:thinking||'', token_in:tokIn, token_out:tokOut });
@@ -2223,6 +2223,23 @@ var OUTLINER_SYSTEM = '你是小说大纲生成专家。根据用户提供的小
 
 // streamCallback: 流式回调 function({type:'thinking'|'content', delta:'...'})，null=非流式
 // tools: 工具定义数组(用于request_tool机制)，null=不传工具
+// ===== Token计费辅助 =====
+function _logTokenUsage(userId, projectId, agentType, model, tokIn, tokOut, tokCache) {
+    if (!tokIn && !tokOut) return;
+    var pricing = queryOne('SELECT * FROM token_pricing_config WHERE (user_id=? OR user_id IS NULL) AND (model_name=? OR is_default=1) ORDER BY is_default ASC LIMIT 1', [userId, model]);
+    var inpPrice = pricing ? pricing.input_price_per_million || 0 : 0;
+    var outPrice = pricing ? pricing.output_price_per_million || 0 : 0;
+    var cachePrice = pricing ? pricing.cache_hit_price_per_million || 0 : 0;
+    var discount = pricing ? pricing.discount_rate || 1 : 1;
+    tokCache = tokCache || 0;
+    var costInput = (tokIn / 1000000) * inpPrice * discount;
+    var costOutput = (tokOut / 1000000) * outPrice * discount;
+    var costCache = (tokCache / 1000000) * cachePrice * discount;
+    dbRun('INSERT INTO token_usage_logs (user_id, project_id, agent_type, model, input_tokens, output_tokens, cache_tokens, cost_input, cost_output, cost_cache) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        [userId, projectId, agentType, model, tokIn, tokOut, tokCache, costInput, costOutput, costCache]);
+    saveDB();
+}
+
 // ===== RAG Embedding 生成 =====
 function _getRetrievalConfig(userId) {
     var cfg = queryOne('SELECT * FROM agents WHERE user_id=? ORDER BY id LIMIT 1', [userId]);
@@ -2578,14 +2595,14 @@ function callOutlineLLM(projectId, userId, systemPrompt, userContent, agentType,
             if (!reply && !thinking) { callback({ error:'模型未返回内容' }); return; }
             console.log('[Writing '+agentType+'] 非流式完成 回复='+reply.length+' 思考='+thinking.length+' tokens in='+tokIn+' out='+tokOut+(skipDbSave?' (skipDbSave)':''));
             if (!skipDbSave) dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, thinking, token_used) VALUES (?,?,?,?,?,?)', [projectId, agentType, 'assistant', reply, thinking, tokIn+tokOut]);
-            dbRun('INSERT INTO token_usage_logs (user_id, project_id, agent_type, model, input_tokens, output_tokens) VALUES (?,?,?,?,?,?)', [userId, projectId, agentType, model, tokIn, tokOut]);
+            _logTokenUsage(userId, projectId, agentType, model, tokIn, tokOut, tokCache);
             saveDB();
             callback({ content:reply, thinking:thinking, token_in:tokIn, token_out:tokOut });
         });
         // 流式模式
         var reader = r.body.getReader();
         var decoder = new TextDecoder();
-        var buf = '', fullContent = '', fullThinking = '', tokIn = 0, tokOut = 0;
+        var buf = '', fullContent = '', fullThinking = '', tokIn = 0, tokOut = 0, tokCache = 0;
         var fullToolCalls = []; // 子智能体请求的工具调用
         function pump() {
             reader.read().then(function(chunk) {
@@ -2598,7 +2615,7 @@ function callOutlineLLM(projectId, userId, systemPrompt, userContent, agentType,
                         console.log('[Writing '+agentType+'] 子智能体请求工具: '+validCalls.map(function(tc){return tc.function.name;}).join(', '));
                     }
                     // 流式模式下不存DB（由前端tool_end保存，避免刷新后双气泡）
-                    dbRun('INSERT INTO token_usage_logs (user_id, project_id, agent_type, model, input_tokens, output_tokens) VALUES (?,?,?,?,?,?)', [userId, projectId, agentType, model, tokIn, tokOut]);
+                    _logTokenUsage(userId, projectId, agentType, model, tokIn, tokOut, tokCache);
                     saveDB();
                     callback({ content:fullContent, thinking:fullThinking, tool_calls:validCalls, token_in:tokIn, token_out:tokOut });
                     return;
@@ -2612,7 +2629,7 @@ function callOutlineLLM(projectId, userId, systemPrompt, userContent, agentType,
                     if (raw === '[DONE]') continue;
                     try {
                         var parsed = JSON.parse(raw);
-                        if (parsed.usage) { tokIn = parsed.usage.prompt_tokens || 0; tokOut = parsed.usage.completion_tokens || 0; }
+                        if (parsed.usage) { tokIn = parsed.usage.prompt_tokens || 0; tokOut = parsed.usage.completion_tokens || 0; tokCache = (parsed.usage.prompt_tokens_details && parsed.usage.prompt_tokens_details.cached_tokens) || 0; }
                         var delta = (parsed.choices && parsed.choices[0]) ? parsed.choices[0].delta : null;
                         if (!delta) continue;
                         if (delta.reasoning_content) {
@@ -2730,14 +2747,28 @@ app.put('/api/writing-projects/:id/chapters/:cid', auth, (req, res) => {
 });
 app.get('/api/writing-projects/:id/token-stats', auth, (req, res) => {
     var today = new Date().toISOString().substring(0,10);
-    var todayTokens = queryOne('SELECT SUM(input_tokens+output_tokens) as total FROM token_usage_logs WHERE project_id=? AND created_at>=?', [req.params.id, today]);
-    var pricing = queryOne('SELECT * FROM token_pricing_config WHERE (user_id=? OR user_id IS NULL) AND is_default=1 LIMIT 1', [req.userId]);
-    var model = pricing ? pricing.model_name : '';
-    var inpPrice = pricing ? pricing.input_price_per_million * (pricing.discount_rate||1) : 0;
-    var outPrice = pricing ? pricing.output_price_per_million * (pricing.discount_rate||1) : 0;
-    var todayCount = (todayTokens && todayTokens.total) || 0;
-    var cost = (todayCount/1000000) * ((inpPrice+outPrice)/2);
-    res.json({ today:todayCount, model:model, cost:cost, inputPrice:inpPrice, outputPrice:outPrice });
+    var rows = queryAll('SELECT input_tokens, output_tokens, cache_tokens, cost_input, cost_output, cost_cache, model FROM token_usage_logs WHERE project_id=? AND created_at>=?', [req.params.id, today]);
+    var totalIn = 0, totalOut = 0, totalCache = 0, totalCostIn = 0, totalCostOut = 0, totalCostCache = 0;
+    var models = {};
+    if (rows) rows.forEach(function(r) {
+        totalIn += r.input_tokens || 0;
+        totalOut += r.output_tokens || 0;
+        totalCache += r.cache_tokens || 0;
+        totalCostIn += r.cost_input || 0;
+        totalCostOut += r.cost_output || 0;
+        totalCostCache += r.cost_cache || 0;
+        if (r.model) models[r.model] = (models[r.model] || 0) + 1;
+    });
+    var totalTokens = totalIn + totalOut;
+    var totalCost = totalCostIn + totalCostOut + totalCostCache;
+    var mainModel = Object.keys(models).sort(function(a,b){ return models[b] - models[a]; })[0] || '';
+    // 累计所有时间的token
+    var allTime = queryOne('SELECT SUM(input_tokens+output_tokens) as total FROM token_usage_logs WHERE project_id=?', [req.params.id]);
+    res.json({
+        today: totalTokens, todayIn: totalIn, todayOut: totalOut, todayCache: totalCache,
+        cost: totalCost, costIn: totalCostIn, costOut: totalCostOut, costCache: totalCostCache,
+        model: mainModel, allTime: (allTime && allTime.total) || 0
+    });
 });
 // ==================== 章节版本历史 ====================
 app.post('/api/writing-projects/:id/chapter-versions', auth, (req, res) => {
@@ -3930,6 +3961,8 @@ app.put('/api/writing-projects/:id/agent-api-config', auth, (req, res) => {
     try { db.run('ALTER TABLE writing_agent_config ADD COLUMN retrieval_model TEXT DEFAULT \'\''); } catch(e) {}
     try { db.run('ALTER TABLE writing_agent_config ADD COLUMN retrieval_endpoint TEXT DEFAULT \'\''); } catch(e) {}
     try { db.run('ALTER TABLE writing_agent_config ADD COLUMN retrieval_api_key TEXT DEFAULT \'\''); } catch(e) {}
+    try { db.run('ALTER TABLE token_usage_logs ADD COLUMN cache_tokens INTEGER DEFAULT 0'); } catch(e) {}
+    try { db.run('ALTER TABLE token_usage_logs ADD COLUMN cost_cache REAL DEFAULT 0.0'); } catch(e) {}
     // pinned_snapshot 需要重建（约束变更）
     try { db.run('DROP TABLE IF EXISTS pinned_snapshot_old'); } catch(e) {}
     try {
