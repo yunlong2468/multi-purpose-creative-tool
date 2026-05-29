@@ -367,7 +367,9 @@ app.post('/api/writing-projects/:id/chunks', auth, (req, res) => {
 app.get('/api/writing-projects/:id/blueprint', auth, (req, res) => {
     var projectId = parseInt(req.params.id);
     var bp = queryOne('SELECT * FROM story_blueprints WHERE project_id=? ORDER BY version DESC LIMIT 1', [projectId]);
-    res.json(bp ? { version: bp.version, blueprint: safeJsonParse(bp.blueprint_json, {}), summary: bp.compression_summary, created_at: bp.created_at } : { version: 0, blueprint: _emptyBlueprint(), summary: '' });
+    var bpResult = bp ? { version: bp.version, blueprint: safeJsonParse(bp.blueprint_json, {}), summary: bp.compression_summary, created_at: bp.created_at } : { version: 0, blueprint: _emptyBlueprint(), summary: '' };
+    broadcastDevLog('info','server','[蓝图] 读取完成 版本='+bpResult.version+(bp?' 有数据':' 无数据'));
+    res.json(bpResult);
 });
 
 app.post('/api/writing-projects/:id/blueprint', auth, (req, res) => {
@@ -386,6 +388,7 @@ app.post('/api/writing-projects/:id/blueprint', auth, (req, res) => {
     // 异步更新蓝图块的embedding
     var retrievalCfg = _getRetrievalConfig(req.userId);
     _enqueueEmbedding(projectId, 'blueprint', 'latest', JSON.stringify(blueprint), JSON.stringify({ version: newVersion }), retrievalCfg);
+        broadcastDevLog("info","server","[蓝图] 已保存 v"+newVersion+" core.premise="+((blueprint.core||{}).premise||"空").substring(0,30));
     res.json({ version: newVersion, ok: true });
 });
 
@@ -451,6 +454,7 @@ app.post('/api/writing-projects/:id/checkpoint', auth, (req, res) => {
     var msgId = dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, metadata) VALUES (?,?,?,?,?)',
         [projectId, 'orchestrator', 'assistant', title || '', JSON.stringify({ type: 'checkpoint', checkpoint_type: checkpoint_type, data: fields, committed: false })]);
     saveDB();
+    broadcastDevLog('info','server','[检查点] 卡片已创建 类型='+checkpoint_type+' 消息ID='+msgId);
     res.json({ ok: true, msg_id: msgId });
 });
 
@@ -466,6 +470,7 @@ app.post('/api/writing-projects/:id/checkpoint/:msgId/commit', auth, (req, res) 
     meta.committed = true;
     meta.committed_at = new Date().toISOString();
     dbRun('UPDATE agent_conversations SET metadata=? WHERE id=?', [JSON.stringify(meta), msgId]);
+    broadcastDevLog('info','server','[检查点] 已提交确认 类型='+meta.checkpoint_type+' 消息ID='+msgId);
     // 增量更新蓝图
     var checkpointData = meta.data || {};
     _incrementalUpdateBlueprint(projectId, meta.checkpoint_type || 'character', checkpointData);
@@ -1849,6 +1854,26 @@ app.post('/api/writing-projects/:id/llm-call', auth, async (req, res) => {
                     // 完整结果存入DB（刷新后可恢复子智能体气泡）
                     dbRun('INSERT INTO agent_conversations (project_id, agent_type, role, content, thinking, metadata) VALUES (?,?,?,?,?,?)',
                         [projectId, actualSubAgent, 'assistant', subFullResult, subFullThinking, '{"type":"tool_result"}']);
+                    // 子智能体完成后自动增量更新蓝图
+                    try {
+                        var tlNameLower = (toolName||'').toLowerCase();
+                        console.log('[蓝图] 工具完成检测 toolName='+toolName+' agent='+actualSubAgent+' summary='+(toolResult.summary||'').substring(0,50));
+                        broadcastDevLog('info','server','[蓝图] 工具完成检测 toolName='+toolName+' agent='+actualSubAgent);
+                        if (actualSubAgent === 'character' || tlNameLower.indexOf('character') >= 0) {
+                            _incrementalUpdateBlueprint(projectId, 'character', { name: toolResult.summary || '' });
+                            broadcastDevLog('info','server','[蓝图] 角色自动更新完成');
+                        } else if (actualSubAgent === 'outliner' || tlNameLower.indexOf('outline') >= 0) {
+                            _incrementalUpdateBlueprint(projectId, 'conflict', { main_thread: toolResult.summary || '' });
+                            broadcastDevLog('info','server','[蓝图] 大纲自动更新完成');
+                        } else if (tlNameLower.indexOf('world') >= 0 || tlNameLower.indexOf('世界观') >= 0 || actualSubAgent.indexOf('world') >= 0) {
+                            // 世界观内容在toolResult.result中（_accContent已累积完整内容）
+                            var _worldContent = (toolResult.result || '').substring(0, 500);
+                            _incrementalUpdateBlueprint(projectId, 'worldbuilding', { era: _worldContent });
+                            broadcastDevLog('info','server','[蓝图] 世界观自动更新完成 内容长度='+(toolResult.result||'').length);
+                        } else {
+                            broadcastDevLog('info','server','[蓝图] 工具不在自动更新范围: '+toolName);
+                        }
+                    } catch(e) { broadcastDevLog('warn','server','[蓝图] 自动更新失败: '+e.message); }
                     res.write('data: '+JSON.stringify({type:'tool_end',tool:toolName,subAgent:actualSubAgent,summary:toolResult.summary,content:toolResult.result||'',thinking:toolResult.thinking||''})+'\n\n');
                     toolMessages.push({ role:'tool', tool_call_id:tc.id, content:JSON.stringify(toolResult) });
                 }
@@ -2237,6 +2262,7 @@ function _logTokenUsage(userId, projectId, agentType, model, tokIn, tokOut, tokC
     var costCache = (tokCache / 1000000) * cachePrice * discount;
     dbRun('INSERT INTO token_usage_logs (user_id, project_id, agent_type, model, input_tokens, output_tokens, cache_tokens, cost_input, cost_output, cost_cache) VALUES (?,?,?,?,?,?,?,?,?,?)',
         [userId, projectId, agentType, model, tokIn, tokOut, tokCache, costInput, costOutput, costCache]);
+    broadcastDevLog('info','server','[Token] '+agentType+' 输入='+tokIn+' 输出='+tokOut+(tokCache?' 缓存命中='+tokCache:'')+' 费用=¥'+(costInput+costOutput+costCache).toFixed(4));
     saveDB();
 }
 
@@ -2406,7 +2432,9 @@ async function _processEmbedQueue() {
 
 // 增量更新：检查点提交后追加数据到蓝图
 function _incrementalUpdateBlueprint(projectId, checkpointType, checkpointData) {
+    broadcastDevLog('info','server','[蓝图] 增量更新开始 类型='+checkpointType+' 数据='+JSON.stringify(checkpointData).substring(0,80));
     var bp = queryOne('SELECT * FROM story_blueprints WHERE project_id=? ORDER BY version DESC LIMIT 1', [projectId]);
+    if (!bp) broadcastDevLog('info','server','[蓝图] 项目无蓝图记录 将创建首个版本');
     var blueprint = bp ? safeJsonParse(bp.blueprint_json, _emptyBlueprintObj()) : _emptyBlueprintObj();
     var changed = false;
     switch (checkpointType) {
@@ -2437,7 +2465,7 @@ function _incrementalUpdateBlueprint(projectId, checkpointType, checkpointData) 
             }
             break;
     }
-    if (changed) _saveCompressedBlueprint(projectId, blueprint, '增量: '+checkpointType, '');
+    if (changed) { broadcastDevLog('info','server','[压缩] 增量压缩 类型='+checkpointType); _saveCompressedBlueprint(projectId, blueprint, '增量: '+checkpointType, ''); }
     return blueprint;
 }
 
@@ -2500,6 +2528,7 @@ function _saveCompressedBlueprint(projectId, blueprint, summary, rounds) {
     var proj = queryOne('SELECT user_id FROM writing_projects WHERE id=?', [projectId]);
     if (proj) { var ecfg = _getRetrievalConfig(proj.user_id); if (ecfg) _enqueueEmbedding(projectId, 'blueprint', 'latest', JSON.stringify(blueprint), JSON.stringify({ version: newVersion }), ecfg); }
     console.log('[Compress] 蓝图已保存 v' + newVersion + ': ' + summary);
+    broadcastDevLog('info','server','[压缩] 版本'+newVersion+' 已完成: '+summary);
 }
 
 function _emptyBlueprintObj() {
@@ -2549,7 +2578,9 @@ async function _buildAssembledContext(projectId, userId, userQuery, mode) {
         var meta = safeJsonParse(proj.metadata, {});
         if (meta.approach) parts.push('## 当前引导方案\n使用「' + meta.approach + '」模式');
     }
-    return parts.join('\n\n');
+    var result = parts.join('\n\n');
+    if (result) broadcastDevLog('info','server','[组装] 上下文拼接完成 片段数='+parts.length+' 模式='+mode);
+    return result;
 }
 
 // 蓝图 → 可读摘要文本

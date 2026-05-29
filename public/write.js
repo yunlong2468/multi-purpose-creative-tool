@@ -2171,7 +2171,7 @@ async function doStreamingCall(text) {
         try {
           var evt = JSON.parse(raw);
           // 任何有意义的事件都重置超时（connected/waiting/tool_start/tool_end）
-          if (evt.type === 'connected' || evt.type === 'waiting' || evt.type === 'tool_start' || evt.type === 'tool_end') {
+          if (evt.type === 'connected' || evt.type === 'waiting' || evt.type === 'tool_start' || evt.type === 'tool_end' || evt.type === 'tool_request') {
             if (streamConnTimeout) { clearTimeout(streamConnTimeout); streamConnTimeout = null; }
             if (evt.type === 'connected') _updateOnlineCount();
             streamConnTimeout = setTimeout(function() {
@@ -2265,7 +2265,7 @@ async function doStreamingCall(text) {
             var trAgent = evt.subAgent || _resolveToolAgent(evt.tool);
             var trLabel = getAgentName(trAgent);
             var trReqLabel = evt.requested || '未知工具';
-            var reqMsg = {type:'system',content:trLabel+' 请求调用 '+trReqLabel+' 工具',time:Date.now()};
+            var reqMsg = {type:'system',content:trLabel+' 正在调用 '+trReqLabel+' 工具（自动授权）',time:Date.now()};
             agentMsgs.push(reqMsg);
             if (ensureMsgInner()) appendMsgToDOM(renderSingleMsg(reqMsg));
           } else if (evt.type === 'tool_end') {
@@ -3224,13 +3224,16 @@ var BLUEPRINT = {
     api('GET', '/writing-projects/'+projectId+'/blueprint').then(function(r) {
       var bp = (r && r.blueprint) ? r.blueprint : null;
       // 仅当API返回非空蓝图时才覆盖（保留OB种子数据）
-      if (bp && (bp.core.premise || bp.core.genre || bp.protagonist.name || bp.world.power_system)) {
+      if (bp && (bp.core.premise || bp.core.genre || bp.protagonist.name || bp.world.power_system || bp.world.era_summary)) {
         self.data = bp;
       } else if (!self.data) {
         self.data = _emptyBlueprintClient();
       }
       self._loaded = true;
-      console.log('[Blueprint] 已加载 版本='+(r&&r.version)+' premise='+((self.data.core||{}).premise||'空'));
+      console.log('[Blueprint] 已加载 版本='+(r&&r.version)+' era='+((self.data.world||{}).era_summary||'空').substring(0,30));
+      // 如果蓝图面板可见则自动渲染
+      var bpPanel = document.getElementById('subPanelBlueprint');
+      if (bpPanel && bpPanel.style.display !== 'none') self.render();
     }).catch(function() {
       if (!self.data) self.data = _emptyBlueprintClient();
       self._loaded = true;
@@ -3252,7 +3255,7 @@ var BLUEPRINT = {
       { label: '风格基调', value: bp.core.tone },
       { label: '目标平台', value: bp.core.target_platform },
       { label: '目标读者', value: bp.core.target_audience }
-    ]);
+    ], 'core');
     // 主角
     html += _bpSection('👤 主角', [
       { label: '姓名', value: bp.protagonist.name },
@@ -3260,26 +3263,26 @@ var BLUEPRINT = {
       { label: '当前阶段', value: bp.protagonist.current_stage },
       { label: '核心特质', value: (bp.protagonist.key_traits||[]).join('、') },
       { label: '核心冲突', value: bp.protagonist.core_conflict }
-    ]);
+    ], 'protagonist');
     // 世界观
     html += _bpSection('🌍 世界观', [
       { label: '力量体系', value: bp.world.power_system },
       { label: '时代概要', value: bp.world.era_summary },
       { label: '主要势力', value: (bp.world.key_factions||[]).join('、') },
       { label: '待解决问题', value: (bp.world.pending_questions||[]).join('；') }
-    ]);
+    ], 'world');
     // 情节
     html += _bpSection('📖 情节', [
       { label: '主线', value: bp.plot.main_thread },
       { label: '支线', value: (bp.plot.sub_threads||[]).map(function(s){ return s.name+' ('+(s.status||'')+')'; }).join('<br>') },
       { label: '伏笔', value: (bp.plot.foreshadowing||[]).map(function(f){ return f.name+' ['+(f.status||'')+']'; }).join('<br>') }
-    ]);
+    ], 'plot');
     // 进度
     html += _bpSection('📊 进度', [
       { label: '当前卷/章', value: '第'+bp.outline_progress.current_volume+'卷 第'+bp.outline_progress.current_chapter+'章' },
       { label: '已写章节', value: bp.outline_progress.chapters_written+'章' },
       { label: '下章钩子', value: bp.outline_progress.next_chapter_hook }
-    ]);
+    ], 'progress');
     // 版本历史入口
     html += '<div class="bp-version-bar" onclick="BLUEPRINT.showHistory()">📜 版本历史</div>';
     container.innerHTML = html;
@@ -3316,6 +3319,20 @@ var BLUEPRINT = {
     });
   },
 
+  clearSection: function(sectionKey) {
+    if (!this.data) return;
+    showConfirm('清除此设定？数据不可恢复。', function(ok) {
+      if (!ok) return;
+      if (sectionKey === 'core') BLUEPRINT.data.core = { premise: '', genre: '', tone: '', target_platform: '', target_audience: '' };
+      else if (sectionKey === 'protagonist') BLUEPRINT.data.protagonist = { name: '', arc_summary: '', current_stage: '', key_traits: [], core_conflict: '' };
+      else if (sectionKey === 'world') BLUEPRINT.data.world = { power_system: '', era_summary: '', key_factions: [], pending_questions: [] };
+      else if (sectionKey === 'plot') BLUEPRINT.data.plot = { main_thread: '', sub_threads: [], foreshadowing: [] };
+      else if (sectionKey === 'progress') BLUEPRINT.data.outline_progress = { current_volume: 1, current_chapter: 1, chapters_written: 0, next_chapter_hook: '' };
+      BLUEPRINT.save();
+      setTimeout(function() { BLUEPRINT.render(); }, 300);
+    });
+  },
+
   rollback: function(version) {
     var self = this;
     showConfirm('确定回退到 v'+version+'？', function(ok) {
@@ -3330,9 +3347,10 @@ var BLUEPRINT = {
 };
 
 var _bpSectionCounter = 0;
-function _bpSection(title, fields) {
+function _bpSection(title, fields, sectionKey) {
   var id = 'bps_' + (++_bpSectionCounter);
-  var html = '<div class="bp-card"><div class="bp-card-hdr" onclick="var b=document.getElementById(\''+id+'\');b.style.display=b.style.display==\'none\'?\'\':\'none\'">'+title+'</div>';
+  sectionKey = sectionKey || id;
+  var html = '<div class="bp-card"><div class="bp-card-hdr" onclick="var b=document.getElementById(\''+id+'\');b.style.display=b.style.display==\'none\'?\'\':\'none\'"><span>'+title+'</span><span class="bp-clear-btn" title="清除此设定" onclick="event.stopPropagation();BLUEPRINT.clearSection(\''+sectionKey+'\')">🗑</span></div>';
   html += '<div class="bp-card-body" id="'+id+'">';
   var hasContent = false;
   fields.forEach(function(f) {
@@ -3579,7 +3597,7 @@ var _pendingCheckpoint = null; // {msgIdx, cpType, cpData, msgId}
 // ==================== SSE ====================
 (function(){var sse=new EventSource('/api/sse?token='+encodeURIComponent(token));sse.addEventListener('message',function(e){try{var d=JSON.parse(e.data);if(d.type==='kicked'){localStorage.removeItem('canvas_token');localStorage.removeItem('canvas_username');window.location.replace('/login.html?reason=kicked');}}catch(ex){}});sse.onerror=function(){console.log('[Write] 踢出SSE断线，自动重连中...');};})();
 
-(function(){var sseUrl='/api/write-sse?projectId='+projectId+'&token='+encodeURIComponent(token);var sse=new EventSource(sseUrl);sse.addEventListener('message',function(e){try{var d=JSON.parse(e.data);if(d.type==='connected'){console.log('[Write] SSE已连接 projectId='+d.projectId);_updateOnlineCount();return;}if(d.type==='reload-chat'||d.type==='stream-done'){console.log('[Write] SSE触发reload-chat');reloadHistoryFromDB();loadTokenStats();return;}if(d.type==='agent-message'&&d.msg){if(!agentBusy){var sseMsg={type:'chat',role:'assistant',time:Date.now(),agent:d.msg.agent_type,content:d.msg.content,thinking:d.msg.thinking||''};agentMsgs.push(sseMsg);appendMsgToDOM(renderSingleMsg(sseMsg));CTX_RING.update();scrollToBottomIfAtBottom();}}}catch(ex){}});sse.onerror=function(){console.log('[Write] Agent SSE断线，自动重连中...');};window._writeSse=sse;})();
+(function(){var sseUrl='/api/write-sse?projectId='+projectId+'&token='+encodeURIComponent(token);var sse=new EventSource(sseUrl);sse.addEventListener('message',function(e){try{var d=JSON.parse(e.data);if(d.type==='connected'){console.log('[Write] SSE已连接 projectId='+d.projectId);_updateOnlineCount();return;}if(d.type==='reload-chat'||d.type==='stream-done'){console.log('[Write] SSE触发reload-chat');reloadHistoryFromDB();loadTokenStats();setTimeout(function(){BLUEPRINT.load();},1000);return;}if(d.type==='agent-message'&&d.msg){if(!agentBusy){var sseMsg={type:'chat',role:'assistant',time:Date.now(),agent:d.msg.agent_type,content:d.msg.content,thinking:d.msg.thinking||''};agentMsgs.push(sseMsg);appendMsgToDOM(renderSingleMsg(sseMsg));CTX_RING.update();scrollToBottomIfAtBottom();}}}catch(ex){}});sse.onerror=function(){console.log('[Write] Agent SSE断线，自动重连中...');};window._writeSse=sse;})();
 
 // 页面刷新/关闭前通知后端终止SSE连接（让后端检测req.aborted并转入后台）
 
