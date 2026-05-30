@@ -1712,7 +1712,9 @@ function executeToolAsync(toolName, argsJson, projectId, userId, streamCallback,
             try {
                 var vb = JSON.parse(bpJsonStr);
                 bp.plot.main_thread = vb.总脉络 || '';
-                if (vb.卷蓝图) bp.plot.sub_threads = vb.卷蓝图.map(function(v){ return { name: v.卷名, status: 'planned', chapters: v.总章数, theme: v.主题 }; });
+                if (vb.卷蓝图) bp.plot.sub_threads = vb.卷蓝图.map(function(v){ return { name: v.卷名, status: 'planned', chapters: v.总章数, theme: v.主题, fullPlan: v }; });
+                // 同时保存完整的卷蓝图JSON到outline_progress（供generate_outline_multi读取详细规划）
+                if (vb.卷蓝图) bp.outline_progress.volume_blueprint_json = bpJsonStr;
                 _saveCompressedBlueprint(projectId, bp, '卷蓝图规划', '');
                 broadcastDevLog('info','server','[Stage4] 卷蓝图已保存 卷数='+(vb.卷蓝图||[]).length+' | Volume blueprint saved volumes='+(vb.卷蓝图||[]).length);
                 resolve({ result: bpJsonStr, summary: '卷蓝图已保存，共'+(vb.卷蓝图||[]).length+'卷' });
@@ -1746,6 +1748,18 @@ function executeToolAsync(toolName, argsJson, projectId, userId, streamCallback,
                 }, streamCallback, null, true);
                 return;
             }
+            // 清除旧draft数据（防止重复生成堆积）
+            var oldDraftChapters = queryOne('SELECT COUNT(*) as c FROM writing_chapters WHERE project_id=? AND status=?', [projectId, 'draft']);
+            var oldDraftVolumes = queryOne('SELECT COUNT(*) as c FROM writing_volumes WHERE project_id=? AND status=?', [projectId, 'draft']);
+            if (oldDraftChapters && oldDraftChapters.c > 0) {
+                dbRun('DELETE FROM writing_chapters WHERE project_id=? AND status=?', [projectId, 'draft']);
+                broadcastDevLog('info','server','[Stage5] 已清除旧draft章节 '+oldDraftChapters.c+'条 | Cleared old draft chapters: '+oldDraftChapters.c);
+            }
+            if (oldDraftVolumes && oldDraftVolumes.c > 0) {
+                dbRun('DELETE FROM writing_volumes WHERE project_id=? AND status=?', [projectId, 'draft']);
+                broadcastDevLog('info','server','[Stage5] 已清除旧draft卷 '+oldDraftVolumes.c+'条 | Cleared old draft volumes: '+oldDraftVolumes.c);
+            }
+            saveDB();
             // 多卷并行生成
             var sharedContext = _buildSharedOutlineContext(projectId) + '\n请根据卷蓝图为每一卷生成详细大纲。';
             broadcastDevLog('info','server','[Stage5] 共享上下文已组装 len='+sharedContext.length+' | Shared context assembled');
@@ -1762,7 +1776,35 @@ function executeToolAsync(toolName, argsJson, projectId, userId, streamCallback,
                     if (sseRes && !sseRes.destroyed) {
                         sseRes.write('data: '+JSON.stringify({type:'outline_progress',completed:vi,total:volumes.length,current:vol.name})+'\n\n');
                     }
-                    var volCtx = sharedContext + '\n\n## 当前卷\n卷名：'+vol.name+'\n主题：'+(vol.theme||'')+'\n章节数：'+(vol.chapters||'未知')+'\n请为这一卷生成详细大纲（包含所有章的关键事件和详细描述）。';
+                    // 组装每卷的详细上下文：从fullPlan中提取起承转合等规划信息
+                    var fullPlan = vol.fullPlan || {};
+                    var volCtx = sharedContext + '\n\n## 当前卷详细规划\n';
+                    volCtx += '卷名：'+(vol.name||fullPlan.卷名||'未知')+'\n';
+                    volCtx += '主题：'+(vol.theme||fullPlan.主题||'')+'\n';
+                    volCtx += '核心冲突：'+(fullPlan.核心冲突||'')+'\n';
+                    volCtx += '主角成长阶段：'+(fullPlan.主角成长||fullPlan.主角成长阶段||'')+'\n';
+                    volCtx += '章节数：'+(vol.chapters||fullPlan.总章数||'待定')+'\n';
+                    // 注入起承转合
+                    var arc = fullPlan.起承转合;
+                    if (arc) {
+                        volCtx += '\n### 起承转合分配\n';
+                        if (arc.起) volCtx += '【起】'+arc.起.章范围+'章：'+arc.起.功能+'\n';
+                        if (arc.承) volCtx += '【承】'+arc.承.章范围+'章：'+arc.承.功能+'\n';
+                        if (arc.转) volCtx += '【转】'+arc.转.章范围+'章：'+arc.转.功能+'\n';
+                        if (arc.合) volCtx += '【合】'+arc.合.章范围+'章：'+arc.合.功能+'\n';
+                    }
+                    // 注入关键节点
+                    if (fullPlan.关键节点 && fullPlan.关键节点.length) {
+                        volCtx += '\n### 关键节点（不可跳过）\n';
+                        fullPlan.关键节点.forEach(function(kn) { volCtx += '- '+kn+'\n'; });
+                    }
+                    // 注入衔接约束
+                    if (fullPlan.衔接) {
+                        volCtx += '\n### 衔接约束\n';
+                        volCtx += '承接上一卷：'+(fullPlan.衔接.承接||'无')+'\n';
+                        volCtx += '为下一卷铺垫：'+(fullPlan.衔接.铺垫||'无')+'\n';
+                    }
+                    volCtx += '\n请严格按照以上起承转合分配和关键节点，生成这一卷的详细大纲。';
                     var volResult = await new Promise(function(resolveVol) {
                         callOutlineLLM(projectId, userId, OUTLINER_VOLUME_SYSTEM, volCtx, 'outliner_vol'+(vi+1), null, function(r) {
                             if (r.error) {
@@ -1808,7 +1850,7 @@ function executeToolAsync(toolName, argsJson, projectId, userId, streamCallback,
                 var okCount = allResults.filter(function(r){ return r.ok; }).length;
                 var summary = '已生成 '+okCount+'/'+volumes.length+' 卷大纲，共 '+totalChapters+' 章';
                 if (sseRes && !sseRes.destroyed) {
-                    sseRes.write('data: '+JSON.stringify({type:'outline_draft_ready',projectId:projectId,volumes:savedVolIds.map(function(id,i){return{id:id,title:volumes[i].name,chapterCount:allResults[i].chapters||0};}),totalChapters:totalChapters})+'\n\n');
+                    sseRes.write('data: '+JSON.stringify({type:'outline_draft_ready',projectId:projectId,volumes:savedVolIds.map(function(id,i){var ar=allResults[i]||{};return{id:id,title:(volumes[i]||{}).name||'?',chapterCount:ar.chapters||0,ok:!!ar.ok,error:ar.error||null};}),totalChapters:totalChapters,okCount:okCount,failCount:volumes.length-okCount})+'\n\n');
                 }
                 broadcastDevLog('info','server','[Stage5] 全部完成 '+summary+' | All complete');
                 resolve({ result: JSON.stringify(allResults), summary: summary, outlineDraft: true, skipDbSave: true });
