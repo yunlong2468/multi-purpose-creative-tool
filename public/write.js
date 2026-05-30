@@ -3540,6 +3540,14 @@ var FLOATING_CANVAS = {
     document.querySelectorAll('#fc-tabs .fc-tab').forEach(function(el) {
       el.classList.toggle('active', el.dataset.tab === tab);
     });
+    // 清理命名生成器面板
+    var ng = document.getElementById('fc-namegen');
+    if (ng) ng.style.display = 'none';
+    var svg = document.getElementById('fc-svg');
+    if (svg) svg.style.display = '';
+    // 显示/隐藏命名按钮
+    var nameBtn = document.getElementById('fc-name-btn');
+    if (nameBtn) nameBtn.style.display = tab === 'character' ? '' : 'none';
     this._scale = 1; this._panX = 0; this._panY = 0;
     this._loadAndRender();
   },
@@ -3999,6 +4007,110 @@ var FLOATING_CANVAS = {
       label.setAttribute('x', x + 20); label.setAttribute('y', iy + 9);
       label.setAttribute('class', 'fc-timeline-label'); label.setAttribute('text-anchor', 'start');
       label.textContent = item.label; g.appendChild(label);
+    });
+  },
+
+  // ========== 随机命名生成器 ==========
+  _namePool: null,
+
+  _loadNamePool: function(cb) {
+    if (this._namePool) { cb(this._namePool); return; }
+    var self = this;
+    fetch('/name_pool.json')
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        self._namePool = data;
+        self._log('namegen', '命名表已加载 姓氏=' + data.统计.姓氏总数 + ' 名字用字=' + (data.统计.男用字 + data.统计.女用字 + data.统计.中性字) + ' | Name pool loaded');
+        cb(data);
+      })
+      .catch(function(err) {
+        self._log('namegen', '命名表加载失败 | Load failed: ' + err.message, 'error');
+        cb(null);
+      });
+  },
+
+  showNameGenerator: function() {
+    var self = this;
+    this._loadNamePool(function(pool) {
+      if (!pool) { toast('命名表加载失败，请刷新页面后重试'); return; }
+
+      var html = '<div style="padding:20px;overflow-y:auto;height:100%;">';
+      html += '<h3 style="color:#ddd;margin-bottom:4px;">🎲 随机命名生成器</h3>';
+      html += '<p style="color:var(--text2);font-size:11px;margin-bottom:16px;">从 ' + pool.统计.姓氏总数 + ' 个姓氏（含 ' + pool.统计.复姓数量 + ' 个复姓）和 ' + (pool.统计.男用字 + pool.统计.女用字 + pool.统计.中性字) + ' 个名字用字中随机组合 | Random name generator</p>';
+
+      // 生成名字的函数
+      function genNames(gender, count) {
+        var surnames = pool.姓氏;
+        var chars = gender === '男' ? pool.名字用字.男 : (gender === '女' ? pool.名字用字.女 : pool.名字用字.男.concat(pool.名字用字.女));
+        var neutrals = pool.名字用字.中性;
+        var results = [];
+        var seen = {};
+        var attempts = 0;
+        while (results.length < count && attempts < count * 10) {
+          attempts++;
+          var s = surnames[Math.floor(Math.random() * surnames.length)];
+          var g = chars[Math.floor(Math.random() * chars.length)];
+          var full = s + g;
+          if (Math.random() > 0.3 && full.length <= 3) {
+            full += neutrals[Math.floor(Math.random() * neutrals.length)];
+          }
+          if (!seen[full]) { seen[full] = true; results.push(full); }
+        }
+        return results;
+      }
+
+      // 男名
+      html += '<div style="margin-bottom:16px;"><b style="color:#3B82F6;font-size:13px;">👨 男名推荐</b>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">';
+      genNames('男', 15).forEach(function(n) {
+        html += '<span style="padding:4px 10px;background:rgba(59,130,246,0.1);border:0.5px solid rgba(59,130,246,0.2);border-radius:4px;font-size:12px;color:#ddd;cursor:pointer;" onclick="FLOATING_CANVAS._copyName(\''+n+'\')" title="点击复制">'+n+'</span>';
+      });
+      html += '<button style="padding:4px 10px;font-size:11px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:var(--text2);cursor:pointer;" onclick="FLOATING_CANVAS.showNameGenerator()">🔄 换一批</button>';
+      html += '</div></div>';
+
+      // 女名
+      html += '<div style="margin-bottom:16px;"><b style="color:#A855F7;font-size:13px;">👩 女名推荐</b>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;">';
+      genNames('女', 15).forEach(function(n) {
+        html += '<span style="padding:4px 10px;background:rgba(168,85,247,0.1);border:0.5px solid rgba(168,85,247,0.2);border-radius:4px;font-size:12px;color:#ddd;cursor:pointer;" onclick="FLOATING_CANVAS._copyName(\''+n+'\')" title="点击复制">'+n+'</span>';
+      });
+      html += '<button style="padding:4px 10px;font-size:11px;background:rgba(255,255,255,0.04);border:0.5px solid var(--border);border-radius:4px;color:var(--text2);cursor:pointer;" onclick="FLOATING_CANVAS.showNameGenerator()">🔄 换一批</button>';
+      html += '</div></div>';
+
+      // 组合建议
+      html += '<div style="font-size:11px;color:var(--text2);border-top:1px solid var(--border);padding-top:10px;">';
+      html += '<b>组合建议 | Suggestions:</b><br>';
+      Object.keys(pool.默认组合建议).forEach(function(k) {
+        html += '· <b>' + k + '</b>: ' + pool.默认组合建议[k] + '<br>';
+      });
+      html += '</div></div>';
+
+      // 在浮动窗口中显示
+      var vp = document.getElementById('fc-viewport');
+      var svg = document.getElementById('fc-svg');
+      svg.style.display = 'none';
+      var existing = document.getElementById('fc-namegen');
+      if (existing) existing.remove();
+      var div = document.createElement('div');
+      div.id = 'fc-namegen';
+      div.innerHTML = html;
+      vp.appendChild(div);
+      div.style.display = 'block';
+    });
+  },
+
+  _copyName: function(name) {
+    navigator.clipboard.writeText(name).then(function() {
+      toast('已复制: ' + name + ' | Copied!');
+    }).catch(function() {
+      // Fallback
+      var ta = document.createElement('textarea');
+      ta.value = name;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      toast('已复制: ' + name + ' | Copied!');
     });
   }
 };

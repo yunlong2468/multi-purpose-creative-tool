@@ -1277,11 +1277,33 @@ function executeToolAsync(toolName, argsJson, projectId, userId, streamCallback,
         } else if (tl.indexOf('character') >= 0 || toolName === 'generate_characters') {
             var proj2 = queryOne('SELECT * FROM writing_projects WHERE id=?', [projectId]);
             var context2 = '项目：'+proj2.title+'\n类型：'+proj2.genre+' '+proj2.sub_genre+'\n';
+            // 注入世界观上下文
+            var worldEntities = queryAll('SELECT name, type, description FROM world_entities WHERE project_id=? ORDER BY id', [projectId]);
+            if (worldEntities.length > 0) {
+                context2 += '\n## 世界观设定\n';
+                var typeGroups = {};
+                worldEntities.forEach(function(e) {
+                    var t = e.type || '其他';
+                    if (!typeGroups[t]) typeGroups[t] = [];
+                    typeGroups[t].push(e.name + (e.description ? '：'+e.description.substring(0,80) : ''));
+                });
+                Object.keys(typeGroups).forEach(function(t) {
+                    context2 += '- ' + t + '：' + typeGroups[t].join('、') + '\n';
+                });
+                var worldRels = queryAll('SELECT fe.name as fn, te.name as tn, wr.relation_type FROM world_relations wr LEFT JOIN world_entities fe ON wr.from_entity_id=fe.id LEFT JOIN world_entities te ON wr.to_entity_id=te.id WHERE wr.project_id=?', [projectId]);
+                if (worldRels.length > 0) {
+                    context2 += '- 实体关系：';
+                    worldRels.forEach(function(r) { context2 += (r.fn||'?')+'→'+(r.relation_type||'关联')+'→'+(r.tn||'?')+'；'; });
+                    context2 += '\n';
+                }
+                broadcastDevLog('info','server','[CharacterGen] 世界观上下文已注入 实体='+worldEntities.length+' 关系='+worldRels.length+' | World context injected entities='+worldEntities.length);
+            }
             var history2 = queryAll('SELECT * FROM agent_conversations WHERE project_id=? ORDER BY created_at ASC LIMIT 200', [projectId]);
             history2.forEach(function(m) {
                 if (m.role==='user') context2 += '用户：'+m.content+'\n';
                 else if (m.role==='assistant') context2 += 'Agent：'+m.content+'\n';
             });
+            broadcastDevLog('info','server','[CharacterGen] 生成开始 contextLen='+context2.length+' | Starting generation contextLen='+context2.length);
             callOutlineLLM(projectId, userId, CHARACTER_SYSTEM, context2, 'character', null, function(result) {
                 if (result.error) { resolve({ error: result.error, summary: '角色生成失败: '+result.error }); return; }
                 var summary = '角色已生成';
