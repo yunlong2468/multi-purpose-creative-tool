@@ -1,12 +1,7 @@
+__pycache__/
+*.pyc
 node_modules/
-data.db
 uploads/
-*.db
-*.db-journal
-check_syntax.js
-run_check.bat
-backfill_assets.js
-start.bat
-*.bak
-MEMORANDUM.md
 buffers/
+*.log
+.DS_Store

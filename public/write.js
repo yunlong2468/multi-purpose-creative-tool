@@ -2224,8 +2224,8 @@ async function doStreamingCall(text) {
         var raw = line.slice(6);
         try {
           var evt = JSON.parse(raw);
-          // 任何有意义的事件都重置超时（connected/waiting/tool_start/tool_end）
-          if (evt.type === 'connected' || evt.type === 'waiting' || evt.type === 'tool_start' || evt.type === 'tool_end' || evt.type === 'tool_request') {
+          // 任何有意义的事件都重置超时
+          if (evt.type === 'connected' || evt.type === 'waiting' || evt.type === 'tool_start' || evt.type === 'tool_end' || evt.type === 'tool_request' || evt.type === 'tool_request_confirm' || evt.type === 'tool_stream' || evt.type === 'outline_progress' || evt.type === 'outline_draft_ready' || evt.type === 'tool_request_status') {
             if (streamConnTimeout) { clearTimeout(streamConnTimeout); streamConnTimeout = null; }
             if (evt.type === 'connected') _updateOnlineCount();
             streamConnTimeout = setTimeout(function() {

@@ -1330,11 +1330,40 @@ function executeToolAsync(toolName, argsJson, projectId, userId, streamCallback,
                         chars = JSON.parse(repaired);
                     }
                     if (chars && chars['角色'] && Array.isArray(chars['角色']) && chars['角色'].length > 0) {
+                        var savedIds = {};
                         chars['角色'].forEach(function(c) {
-                            dbRun('INSERT INTO writing_characters (project_id, name, profile_json) VALUES (?,?,?)', [projectId, c['姓名']||'未命名', JSON.stringify(c)]);
+                            var cid = dbRun('INSERT INTO writing_characters (project_id, name, profile_json) VALUES (?,?,?)', [projectId, c['姓名']||'未命名', JSON.stringify(c)]);
+                            savedIds[c['姓名']||''] = cid;
                         });
                         saveDB();
-                        summary = '已生成 '+chars['角色'].length+' 个角色';
+                        // 自动提取关系网 → relationship_edges
+                        var relCount = 0;
+                        chars['角色'].forEach(function(c) {
+                            var fromId = savedIds[c['姓名']||''];
+                            if (!fromId) return;
+                            var relNet = c['关系网'];
+                            if (!relNet) return;
+                            // 关系网可能是对象 {角色名: 关系描述} 或数组 [{角色名, 关系}]
+                            var relObj = typeof relNet === 'string' ? (function(){ try { return JSON.parse(relNet); } catch(e) { return null; } })() : relNet;
+                            if (!relObj || typeof relObj !== 'object') return;
+                            Object.keys(relObj).forEach(function(targetName) {
+                                var toId = savedIds[targetName];
+                                if (!toId || toId === fromId) return;
+                                var desc = relObj[targetName];
+                                var relType = 'custom';
+                                var descLower = String(desc||'').toLowerCase();
+                                if (descLower.indexOf('敌对')>=0 || descLower.indexOf('敌人')>=0) relType = '敌对';
+                                else if (descLower.indexOf('同盟')>=0 || descLower.indexOf('盟友')>=0) relType = '同盟';
+                                else if (descLower.indexOf('从属')>=0 || descLower.indexOf('手下')>=0||descLower.indexOf('上级')>=0) relType = '从属';
+                                else if (descLower.indexOf('师徒')>=0 || descLower.indexOf('师父')>=0||descLower.indexOf('徒弟')>=0) relType = '师徒';
+                                else if (descLower.indexOf('亲属')>=0 || descLower.indexOf('家人')>=0||descLower.indexOf('兄弟')>=0||descLower.indexOf('姐妹')>=0) relType = '亲属';
+                                dbRun('INSERT INTO relationship_edges (project_id, from_character_id, to_character_id, relation_type, description) VALUES (?,?,?,?,?)', [projectId, fromId, toId, relType, String(desc||'').substring(0,200)]);
+                                relCount++;
+                            });
+                        });
+                        if (relCount > 0) { saveDB(); broadcastDevLog('info','server','[CharacterGen] 关系网已提取 '+relCount+'条 | Relationships extracted: '+relCount); }
+                        summary = '已生成 '+chars['角色'].length+' 个角色'+(relCount>0?'，'+relCount+'条关系':'');
+                        broadcastDevLog('info','server','[CharacterGen] 角色生成完成 角色='+chars['角色'].length+' 关系='+relCount+' | Characters generated chars='+chars['角色'].length+' rels='+relCount);
                     } else if (chars && chars['角色'] && !Array.isArray(chars['角色'])) {
                         summary = '角色已生成但"角色"字段不是数组，请检查LLM输出格式';
                         console.warn('[Writing 角色] 角色字段非数组，类型:', typeof chars['角色']);
